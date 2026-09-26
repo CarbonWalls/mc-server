@@ -458,6 +458,10 @@ def bootstrap(job, spec: dict | None = None) -> dict:
             out = out if isinstance(out, dict) else {"ok": True}
         except Exception as exc:  # a step failing must not kill the run
             out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        # version.install_jdk() and friends signal success by returning details
+        # and failure by raising - a dict with no verdict and no error succeeded.
+        if "ok" not in out and not out.get("error"):
+            out["ok"] = True
         out["step"] = label
         result["steps"].append(out)
         if not out.get("ok"):
