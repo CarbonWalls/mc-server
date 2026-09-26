@@ -11,7 +11,7 @@ FIELDS = [
     ("xms", "initial java heap, e.g. 512M", "memory"),
     ("xmx", "maximum java heap, e.g. 768M", "memory"),
     ("server_port", "java edition port (default 25565)", "port"),
-    ("bedrock_port", "bedrock/Geyser port (default 44041)", "port"),
+    ("bedrock_port", "bedrock/Geyser port (default 19132)", "port"),
     ("tunnel", "bore | playit | none", "choice"),
     ("active_instance", "instance start.sh launches", "instance"),
     ("java", "java override path, blank = bundled JDK", "text"),

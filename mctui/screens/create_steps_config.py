@@ -115,7 +115,7 @@ class GameplayStep(Step):
 class NetworkStep(Step):
     key = "network"
     title = "network"
-    hint = "tunnel + ports. bedrock needs Geyser (port 44041)"
+    hint = "tunnel + ports. bedrock needs Geyser (port 19132)"
     handles_enter = True
     widget = None
     edit = None
@@ -134,7 +134,7 @@ class NetworkStep(Step):
                 "tunnel": wiz.ctx.settings.get("tunnel", "bore"),
                 "server-port": str(wiz.ctx.settings.get("server_port", 25565)),
                 "bedrock": "true",
-                "bedrock-port": str(wiz.ctx.settings.get("bedrock_port", 44041)),
+                "bedrock-port": str(wiz.ctx.settings.get("bedrock_port", 19132)),
             }
         self.widget = w.ListView([])
         self._sync(wiz)

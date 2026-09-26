@@ -26,6 +26,25 @@ your friends — they connect via *Multiplayer → Direct Connect*. That's it.
 
 Stop it with `./stop.sh` (saves the world cleanly).
 
+### From a completely raw machine
+
+If the folder is a fresh checkout with nothing downloaded yet, `mctui` can take
+it from zero to a running server on its own — the same logic `setup.sh` uses,
+but driven from Python so it reports progress and is resumable:
+
+```bash
+python3 mc_tui.py --doctor      # what's present, what's missing (changes nothing)
+python3 mc_tui.py --bootstrap   # download + configure everything into this folder
+```
+
+`--bootstrap` is idempotent: every artifact it finds on disk is reused, and the
+large downloads retry and resume from where the connection dropped, so a flaky
+link just makes it slower rather than restarting a 140 MB JDK from scratch. It
+only writes inside this folder — no `pip`, no root, no system-wide installs. It
+also writes the Geyser config for the playit tunnel (Bedrock on 19132,
+proxy-protocol v2, `broadcast-port` = the tunnel's public port); see
+[`docs/PORT_SETUP.md`](docs/PORT_SETUP.md).
+
 ## How "reachable from anywhere" works
 
 Most home/mobile networks sit behind NAT or carrier-grade NAT, so you can't just
@@ -50,8 +69,12 @@ repo is public; see `docs/PORT_SETUP.md` for how to get your own.
 
 Two separate tunnels are required on playit's free tier (a combined TCP+UDP
 tunnel is a paid feature): one TCP tunnel for Java → `127.0.0.1:25565`, and one
-UDP tunnel for Bedrock → `127.0.0.1:44041`. Geyser's `bedrock.port` is set to
-**44041** to match that tunnel's local destination port.
+UDP tunnel for Bedrock → `127.0.0.1:19132`. In the playit dashboard create the
+Bedrock tunnel as type **Minecraft Bedrock**, destination `127.0.0.1:19132`,
+with **proxy-protocol-v2** enabled. Geyser then listens on the default Bedrock
+port **19132** and `broadcast-port` is set to the public port playit assigned,
+so Bedrock clients are sent to the tunnel and not to the local port. See
+[`docs/PORT_SETUP.md`](docs/PORT_SETUP.md) for the full walkthrough.
 
 - **Java Edition** works over either tunnel (TCP).
 - **Bedrock Edition** needs UDP, so use playit.gg for Bedrock players:
@@ -66,9 +89,8 @@ UDP tunnel for Bedrock → `127.0.0.1:44041`. Geyser's `bedrock.port` is set to
 
 - **Java Edition** (PC/Mac/Linux): Multiplayer → Direct Connect → the printed `host:port`
 - **Bedrock Edition** (phone/console/Win10): the server speaks Bedrock via Geyser on
-  UDP **44041** (matching the playit tunnel destination). Over the internet, add the
-  playit host + port 44041 in *Servers → Add Server*. On LAN, use this machine's
-  local IP with port 44041.
+  UDP **19132**. Over the internet, add the playit host + the tunnel's public port
+  in *Servers → Add Server*. On LAN, use this machine's local IP with port 19132.
 
 ## Bedrock players over the internet (one-time setup)
 
@@ -80,8 +102,8 @@ TUNNEL=playit ./start.sh
 ```
 
 The agent connects and playit assigns you a persistent public host. Give Bedrock
-players the playit host with the Bedrock port (44041 on this host, matching the
-UDP tunnel's local destination). Java players use the same host on the Java port.
+players the playit host with the Bedrock port (the tunnel's public port, 19132 on
+this host). Java players use the same host on the Java port.
 
 This step can't be automated — the claim is intentionally an interactive browser
 login that ties the agent to your account. It happens exactly once.
@@ -94,10 +116,12 @@ login that ties the agent to your account. It happens exactly once.
 - **Bedrock** (`<your-tunnel>.tun.ply.gg:19132`, UDP): **verified working.**
   mcstatus.io reports `online: true` (version 26.51 / MCPE), and a correctly
   formed RakNet Unconnected Ping from the open internet gets a 161-byte pong.
-  Geyser listens on **UDP 44041** (not 19132) so it matches the playit tunnel's
-  local destination port — if you change the tunnel, change `bedrock.port` in
-  `plugins/Geyser-Spigot/config.yml` to match. LAN Bedrock players must use
-  port **44041** (not the default 19132).
+  Geyser listens on the default **UDP 19132**, which is where the playit
+  Minecraft-Bedrock tunnel forwards; `broadcast-port` is set to the tunnel's
+  public port so Bedrock clients are pointed at it. If you move Geyser to
+  another port, set the tunnel destination to match and update `bedrock.port`
+  + `broadcast-port` in `plugins/Geyser-Spigot/config.yml`. LAN Bedrock players
+  use this machine's local IP on port **19132**.
 
 The RakNet ping wire format (for re-testing) is:
 `0x01` + 8-byte big-endian time + 16-byte MAGIC `00FFFF00FEFEFEFEFDFDFDFD12345678`
@@ -161,6 +185,8 @@ A curses front-end for everything above, written with **Python stdlib only**
 python3 mc_tui.py                 # dashboard
 python3 mc_tui.py --screen logs    # start on a specific screen
 python3 mc_tui.py --check          # import every module (no terminal needed)
+python3 mc_tui.py --doctor         # check this machine, change nothing
+python3 mc_tui.py --bootstrap      # install everything from zero, resumable
 ```
 
 | Screen        | What it does |
@@ -196,9 +222,10 @@ instance is current; `start.sh` continues to launch `server/` unless you export
 `TUNNEL`/`XMS` yourself.
 
 **Tests.** `python3 tests/test_*.py` — foundation/config, processes, network +
-probes, versions/downloads, logs/backups/instances/players, and a pty-driven
-smoke test that walks every screen plus the create wizard (metadata only, it
-stops before any jar download).
+probes, versions/downloads, a flaky-link download test (retry + HTTP-range
+resume against a local stdlib server), logs/backups/instances/players, and a
+pty-driven smoke test that walks every screen plus the create wizard (metadata
+only, it stops before any jar download).
 
 ### Assumptions & limitations
 

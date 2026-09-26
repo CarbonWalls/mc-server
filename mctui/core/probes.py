@@ -181,7 +181,7 @@ def mcstatus_java(host: str, port: int = 25565, timeout: int = 20) -> dict:
     }
 
 
-def mcstatus_bedrock(host: str, port: int = 44041, timeout: int = 20) -> dict:
+def mcstatus_bedrock(host: str, port: int = 19132, timeout: int = 20) -> dict:
     url = f"https://api.mcstatus.io/v2/status/bedrock/{host}:{int(port)}"
     try:
         data = download.fetch_json(url, timeout=timeout)

@@ -13,7 +13,7 @@ DEFAULT_SETTINGS = {
     "tunnel": "bore",
     "active_instance": MAIN_INSTANCE_ID,
     "java": "",
-    "bedrock_port": 44041,
+    "bedrock_port": 19132,
 }
 
 

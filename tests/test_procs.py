@@ -57,9 +57,15 @@ def test_command_build():
 def test_missing_paths():
     res = procs.start_server("no-such-instance-xyz")
     assert not res["ok"] and "missing paper.jar" in res["error"], res
-    res2 = procs.start_playitd()
-    if paths.bin_dir().joinpath("playitd").exists() and paths.playit_secret().exists():
+    # the "already running" guard must refuse *without* launching a real
+    # daemon: patch playitd_status so the guard sees a running agent
+    original = procs.playitd_status
+    procs.playitd_status = lambda: {"state": "running", "pid": os.getpid()}
+    try:
+        res2 = procs.start_playitd()
         assert not res2["ok"] and "already running" in res2["error"], res2
+    finally:
+        procs.playitd_status = original
     print("ok error paths")
 
 

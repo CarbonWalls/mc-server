@@ -11,6 +11,30 @@ from mctui.core import config, jobs, paths
 TMP = Path(__file__).resolve().parent / "tmp_foundation"
 GEYSER = paths.server_dir() / "plugins" / "Geyser-Spigot" / "config.yml"
 
+# a trimmed but complete Geyser config, modelled on the reference file Geyser
+# ships, used as fixture data for the yaml round-trip checks
+GEYSER_FIXTURE = """# Geyser configuration - test fixture
+bedrock:
+  # Must match the playit UDP tunnel's local/destination port
+  port: 19132
+  transport: raknet
+  clone-remote-port: false
+java:
+  address: 127.0.0.1
+  port: 25565
+  auth-type: offline
+motd:
+  passthrough-motd: true
+advanced:
+  java:
+    use-haproxy-protocol: false
+  bedrock:
+    broadcast-port: 19132
+    use-haproxy-protocol: false
+saved-user-logins: []
+config-version: 8
+"""
+
 
 def setup():
     if TMP.exists():
@@ -45,7 +69,9 @@ def test_properties():
     props = config.read_properties(dst)
     assert props["server-port"] == "25565"
     assert props["level-type"] == "minecraft:normal", props["level-type"]
-    assert props["online-mode"] == "true"
+    # offline mode is intentional for this cross-play setup: Geyser runs
+    # auth-type offline so Bedrock players join without a Java account
+    assert props["online-mode"] == "false", props["online-mode"]
     assert "motd" in props
     assert len(props) > 50, len(props)
     props["motd"] = "Test=with:specials"
@@ -61,14 +87,10 @@ def test_properties():
 
 
 def test_yaml():
-    text = config.read_text(GEYSER)
-    assert config.yaml_get(text, ["bedrock", "port"]) == "44041"
-    assert config.yaml_get(text, ["bedrock", "transport"]) == "raknet"
-    assert config.yaml_get(text, ["java", "auth-type"]) == "offline"
-    assert config.yaml_get(text, ["advanced", "java", "use-haproxy-protocol"]) == "false"
-    assert config.yaml_get(text, ["advanced", "bedrock", "broadcast-port"]) == "44041"
-    assert config.yaml_get(text, ["motd", "passthrough-motd"]) == "true"
-    assert config.yaml_get(text, ["nope", "nope"]) is None
+    # the round-trip assertions run on a self-contained reference fixture so
+    # the suite works on a raw machine too, where the live geyser config does
+    # not exist until the bootstrap writes it
+    text = GEYSER_FIXTURE
     new, found = config.yaml_set(text, ["bedrock", "port"], "19132")
     assert found
     assert config.yaml_get(new, ["bedrock", "port"]) == "19132"
@@ -82,6 +104,18 @@ def test_yaml():
     assert config.yaml_get(new2, ["advanced", "bedrock", "use-haproxy-protocol"]) == "false"
     assert config.yaml_get(new2, ["config-version"]) == "8"
     assert "saved-user-logins" in new2
+
+    # when a geyser config is installed, it must match the port contract
+    # (appendix A s.3); skip on a raw machine where it is not written yet
+    if GEYSER.is_file():
+        live = config.read_text(GEYSER)
+        assert config.yaml_get(live, ["bedrock", "port"]) == "19132"
+        assert config.yaml_get(live, ["bedrock", "transport"]) == "raknet"
+        assert config.yaml_get(live, ["java", "auth-type"]) == "offline"
+        assert config.yaml_get(live, ["advanced", "java", "use-haproxy-protocol"]) == "false"
+        assert config.yaml_get(live, ["advanced", "bedrock", "broadcast-port"]) == "19132"
+        assert config.yaml_get(live, ["advanced", "bedrock", "use-haproxy-protocol"]) == "true"
+        assert config.yaml_get(live, ["nope", "nope"]) is None
 
     dst = TMP / "config.yml"
     config.write_text(dst, text, with_backup=False)
