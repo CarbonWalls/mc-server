@@ -289,14 +289,14 @@ def _download_paper(job, paper_version: str = "") -> dict:
     """Resolve the newest stable build of the requested line and fetch it."""
     try:
         if paper_version:
-            builds = version.paper_builds(paper_version, limit=5)
-            build = next((b for b in builds
-                          if version._looks_release(str(b.get("channel", "")))
-                          or b.get("sha256")), None) or (builds[0] if builds else None)
+            builds = version.paper_builds(paper_version, limit=8)
+            # a line can be marked release while no STABLE build is published yet
+            build = next((b for b in builds if b.get("url")), None)
         else:
-            builds = version.paper_versions(limit=20)
-            entry = next((e for e in builds if e.get("release")), None) or \
-                (builds[0] if builds else None)
+            listing = version.paper_versions(limit=20)
+            entry = next((e for e in listing
+                          if e.get("release") and (e.get("build") or {}).get("url")),
+                         None)
             build = (entry or {}).get("build")
             paper_version = (entry or {}).get("key", "")
         if not build or not build.get("url"):
