@@ -256,7 +256,7 @@ def _write_geyser_config(target: Path, geyser: dict) -> dict:
             "java:\n  auth-type: offline\nadvanced:\n  java:\n    use-haproxy-protocol: false\n"
             "  bedrock:\n    broadcast-port: 0\nconfig-version: 8\n"
         )
-    port = str(int(geyser.get("port", 44041)))
+    port = str(int(geyser.get("port", 19132)))
     broadcast = str(int(geyser.get("broadcast_port") or port))
     auth = str(geyser.get("auth_type", "offline"))
     transport = str(geyser.get("transport", "raknet"))

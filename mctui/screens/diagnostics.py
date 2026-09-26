@@ -150,7 +150,7 @@ class diagnostics(Screen):
         return out
 
     def _bedrock_ping(self):
-        port = int(self.ctx.settings.get("bedrock_port", 44041) or 44041)
+        port = int(self.ctx.settings.get("bedrock_port", 19132) or 19132)
         out = [f"-- raknet ping 127.0.0.1:{port} --"]
         try:
             result = probes.raknet_probe("127.0.0.1", port, timeout=4.0)
@@ -169,7 +169,7 @@ class diagnostics(Screen):
         return out
 
     def _api_bedrock(self):
-        port = int(self.ctx.settings.get("bedrock_port", 44041) or 44041)
+        port = int(self.ctx.settings.get("bedrock_port", 19132) or 19132)
         out = ["-- mcstatus.io bedrock --"]
         try:
             out.append(str(probes.mcstatus_bedrock("127.0.0.1", port, timeout=15)))

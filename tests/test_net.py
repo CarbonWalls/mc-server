@@ -107,7 +107,7 @@ def test_raknet():
 def test_mcstatus():
     java = probes.mcstatus_java("laurel-reef.tun.ply.gg", 25565, timeout=20)
     assert isinstance(java["ok"], bool) and "source" in java, java
-    bedrock = probes.mcstatus_bedrock("laurel-onion.tun.ply.gg", 44041, timeout=20)
+    bedrock = probes.mcstatus_bedrock("laurel-onion.tun.ply.gg", 19132, timeout=20)
     assert isinstance(bedrock["ok"], bool), bedrock
     print(f"ok mcstatus java={java['ok']}:{java.get('error','')[:30]} bedrock={bedrock['ok']}:{bedrock.get('error','')[:30]}")
 

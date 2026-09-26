@@ -62,11 +62,12 @@ def test_properties():
 
 def test_yaml():
     text = config.read_text(GEYSER)
-    assert config.yaml_get(text, ["bedrock", "port"]) == "44041"
+    assert config.yaml_get(text, ["bedrock", "port"]) == "19132"
     assert config.yaml_get(text, ["bedrock", "transport"]) == "raknet"
     assert config.yaml_get(text, ["java", "auth-type"]) == "offline"
     assert config.yaml_get(text, ["advanced", "java", "use-haproxy-protocol"]) == "false"
-    assert config.yaml_get(text, ["advanced", "bedrock", "broadcast-port"]) == "44041"
+    assert config.yaml_get(text, ["advanced", "bedrock", "broadcast-port"]) == "19132"
+    assert config.yaml_get(text, ["advanced", "bedrock", "use-haproxy-protocol"]) == "true"
     assert config.yaml_get(text, ["motd", "passthrough-motd"]) == "true"
     assert config.yaml_get(text, ["nope", "nope"]) is None
     new, found = config.yaml_set(text, ["bedrock", "port"], "19132")

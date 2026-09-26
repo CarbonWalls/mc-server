@@ -179,7 +179,9 @@ def tunnel_rows(result: dict) -> list:
 
 
 def _looks_udp(destination: str) -> bool:
-    return destination.endswith(":44041") or destination.endswith(":19132")
+    # Bedrock rides the default Geyser port; 44041 is the legacy value this
+    # project used before appendix A s.3 moved it back to 19132.
+    return destination.endswith(":19132") or destination.endswith(":44041")
 
 
 def format_uptime(seconds) -> str:
