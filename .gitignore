@@ -1,0 +1,41 @@
+# --- runtime / binaries (tens to hundreds of MB, downloaded by setup.sh) ---
+jdk/
+cache/
+libraries/
+versions/
+bin/
+*.jar
+
+# --- the live server install (world data, player identifiers, logs) ---
+server/
+backups/
+instances/
+logs/
+
+# --- tunnel state and local settings ---
+data/playit.toml
+data/tui_settings.json
+data/playit.sock
+*.pid
+*.bak
+*.part
+*.tmp
+
+# --- secrets ---
+*.secret
+*.key
+*.pem
+id_rsa*
+id_ed25519*
+
+# --- python ---
+__pycache__/
+*.pyc
+
+# --- editor / os noise ---
+*.swp
+*.swo
+.DS_Store
+
+# --- test scratch dirs ---
+tests/tmp_*/
