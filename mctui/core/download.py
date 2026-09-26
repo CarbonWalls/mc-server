@@ -1,6 +1,7 @@
 import hashlib
 import os
 import ssl
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -8,27 +9,30 @@ from pathlib import Path
 CHUNK = 65536
 USER_AGENT = "mc-tui/1.0 (+self-hosted minecraft server manager)"
 DEFAULT_TIMEOUT = 60
+MAX_ATTEMPTS = 6          # a big jar on a flaky link often needs more than one go
+RETRY_BACKOFF = 2.0       # seconds, doubled per attempt
 
 
 class DownloadError(Exception):
     pass
 
 
-def _request(url: str, timeout: int = DEFAULT_TIMEOUT) -> urllib.request.Request:
-    return urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "*/*",
-            "Accept-Encoding": "identity",
-        },
-    )
+def _request(url: str, timeout: int = DEFAULT_TIMEOUT, extra_headers=None) -> urllib.request.Request:
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    return urllib.request.Request(url, headers=headers)
 
 
-def open_stream(url: str, timeout: int = DEFAULT_TIMEOUT):
+def open_stream(url: str, timeout: int = DEFAULT_TIMEOUT, range_header=None):
     ctx = ssl.create_default_context()
+    extra = {"Range": range_header} if range_header else None
     try:
-        resp = urllib.request.urlopen(_request(url, timeout), timeout=timeout, context=ctx)
+        resp = urllib.request.urlopen(_request(url, timeout, extra), timeout=timeout, context=ctx)
     except urllib.error.HTTPError as exc:
         raise DownloadError(f"HTTP {exc.code} for {url}") from exc
     except urllib.error.URLError as exc:
@@ -58,44 +62,104 @@ def sha512_file(path) -> str:
     return digest.hexdigest()
 
 
+def _digest_existing(digests: list, part_path) -> None:
+    """Feed the bytes already sitting in a .part file into the digests."""
+    if not any(digests):
+        return
+    with open(part_path, "rb") as fh:
+        while True:
+            chunk = fh.read(CHUNK)
+            if not chunk:
+                break
+            for digest in digests:
+                if digest is not None:
+                    digest.update(chunk)
+
+
+def _backoff(attempt: int) -> None:
+    """Sleep before a retry: 2s, 4s, 8s ... capped at 10s."""
+    time.sleep(min(RETRY_BACKOFF * 2 ** (attempt - 1), 10.0))
+
+
 def download(url: str, dest, sha256: str | None = None, sha512: str | None = None,
-             expected_size: int | None = None, on_progress=None, timeout: int = 120) -> dict:
+             expected_size: int | None = None, on_progress=None, timeout: int = 120,
+             attempts: int = MAX_ATTEMPTS) -> dict:
+    """Download ``url`` to ``dest`` atomically, verifying hashes and size.
+
+    A big artifact on a flaky link is retried; when the server supports
+    ranges, an interrupted transfer resumes from the bytes already in the
+    ``.part`` file instead of starting over.
+    """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
-    resp = open_stream(url, timeout=timeout)
     total = expected_size
-    header_len = resp.headers.get("Content-Length") if resp.headers else None
-    if total is None and header_len:
+    attempt = 0
+    while True:
+        attempt += 1
+        have = part.stat().st_size if part.is_file() else 0
+        digest256 = hashlib.sha256() if sha256 else None
+        digest512 = hashlib.sha512() if sha512 else None
         try:
-            total = int(header_len)
-        except ValueError:
-            total = None
-    digest256 = hashlib.sha256() if sha256 else None
-    digest512 = hashlib.sha512() if sha512 else None
-    done = 0
-    try:
-        with open(part, "wb") as out:
-            while True:
-                chunk = resp.read(CHUNK)
-                if not chunk:
-                    break
-                out.write(chunk)
-                if digest256:
-                    digest256.update(chunk)
-                if digest512:
-                    digest512.update(chunk)
-                done += len(chunk)
-                if on_progress:
-                    on_progress(done, total or 0)
-    except (OSError, ssl.SSLError) as exc:
-        _cleanup(part)
-        raise DownloadError(f"write failed: {exc}") from exc
-    finally:
+            resp = open_stream(url, timeout=timeout,
+                               range_header=(f"bytes={have}-" if have else None))
+        except (DownloadError, OSError, ssl.SSLError) as exc:
+            if attempt >= attempts:
+                _cleanup(part)
+                if isinstance(exc, DownloadError):
+                    raise
+                raise DownloadError(f"open failed: {exc}") from exc
+            _backoff(attempt)
+            continue
+        done = 0
+        mode = "wb"
+        resumed = getattr(resp, "status", 200) == 206
         try:
-            resp.close()
-        except OSError:
-            pass
+            if have and resumed:
+                # the server accepted the range: hash the bytes we already have
+                _digest_existing([digest256, digest512], part)
+                done = have
+                mode = "ab"
+            if total is None and not resumed:
+                header_len = resp.headers.get("Content-Length") if resp.headers else None
+                if header_len:
+                    try:
+                        total = int(header_len)
+                    except ValueError:
+                        total = None
+            with open(part, mode) as out:
+                while True:
+                    chunk = resp.read(CHUNK)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    if digest256:
+                        digest256.update(chunk)
+                    if digest512:
+                        digest512.update(chunk)
+                    done += len(chunk)
+                    if on_progress:
+                        on_progress(done, total or 0)
+        except (OSError, ssl.SSLError) as exc:
+            if attempt >= attempts:
+                _cleanup(part)
+                raise DownloadError(f"write failed: {exc}") from exc
+            _backoff(attempt)
+            continue
+        finally:
+            try:
+                resp.close()
+            except OSError:
+                pass
+        if total and done < total:
+            # the stream ended early (dropped connection): retry and resume
+            if attempt >= attempts:
+                _cleanup(part)
+                raise DownloadError(f"short read: got {done} of {total} bytes")
+            _backoff(attempt)
+            continue
+        break
+
     size = part.stat().st_size
     if total and size != total:
         _cleanup(part)

@@ -37,11 +37,12 @@ python3 mc_tui.py --doctor      # what's present, what's missing (changes nothin
 python3 mc_tui.py --bootstrap   # download + configure everything into this folder
 ```
 
-`--bootstrap` is idempotent: every artifact it finds on disk is reused, so
-re-running after a network drop picks up where it stopped. It only writes inside
-this folder — no `pip`, no root, no system-wide installs. It also writes the
-Geyser config for the playit tunnel (Bedrock on 19132, proxy-protocol v2,
-`broadcast-port` = the tunnel's public port); see
+`--bootstrap` is idempotent: every artifact it finds on disk is reused, and the
+large downloads retry and resume from where the connection dropped, so a flaky
+link just makes it slower rather than restarting a 140 MB JDK from scratch. It
+only writes inside this folder — no `pip`, no root, no system-wide installs. It
+also writes the Geyser config for the playit tunnel (Bedrock on 19132,
+proxy-protocol v2, `broadcast-port` = the tunnel's public port); see
 [`docs/PORT_SETUP.md`](docs/PORT_SETUP.md).
 
 ## How "reachable from anywhere" works
@@ -221,9 +222,10 @@ instance is current; `start.sh` continues to launch `server/` unless you export
 `TUNNEL`/`XMS` yourself.
 
 **Tests.** `python3 tests/test_*.py` — foundation/config, processes, network +
-probes, versions/downloads, logs/backups/instances/players, and a pty-driven
-smoke test that walks every screen plus the create wizard (metadata only, it
-stops before any jar download).
+probes, versions/downloads, a flaky-link download test (retry + HTTP-range
+resume against a local stdlib server), logs/backups/instances/players, and a
+pty-driven smoke test that walks every screen plus the create wizard (metadata
+only, it stops before any jar download).
 
 ### Assumptions & limitations
 
