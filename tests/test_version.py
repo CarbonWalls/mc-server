@@ -86,8 +86,10 @@ def test_plugins():
         assert entry["filename"].endswith(".jar")
     assert "cdn.modrinth.com" in by_id["luckperms"]["url"]
     assert "download.geysermc.org" in by_id["floodgate"]["url"]
-    assert by_id["floodgate"]["size"] == 11561096, by_id["floodgate"]["size"]
-    assert by_id["geyser"]["size"] == 47113745, by_id["geyser"]["size"]
+    # exact sizes are not pinned: upstream re-releases these jars, so only
+    # assert they resolve to a plausible full-size jar
+    assert by_id["floodgate"]["size"] > 5_000_000, by_id["floodgate"]["size"]
+    assert by_id["geyser"]["size"] > 40_000_000, by_id["geyser"]["size"]
     assert "github.com" in by_id["vault"]["url"]
     assert by_id["luckperms"]["sha512"]
     print("ok plugin resolution: " + ", ".join(f"{p['id']}={p['version']}" for p in resolved))

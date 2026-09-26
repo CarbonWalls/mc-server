@@ -46,3 +46,4 @@ __pycache__/
 
 # --- test scratch dirs ---
 tests/tmp_*/
+tmp_bootstrap/

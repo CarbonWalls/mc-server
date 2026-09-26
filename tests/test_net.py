@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import struct
 import sys
@@ -105,9 +106,14 @@ def test_raknet():
 
 
 def test_mcstatus():
-    java = probes.mcstatus_java("laurel-reef.tun.ply.gg", 25565, timeout=20)
+    # the probe targets are example hostnames: this test only checks the
+    # wrapper returns a well-formed verdict (it is not an uptime check), and
+    # the real public tunnel address of this deployment is never committed
+    java_host = os.environ.get("MCTUI_TEST_JAVA_HOST", "example.tun.ply.gg")
+    bedrock_host = os.environ.get("MCTUI_TEST_BEDROCK_HOST", "example.tun.ply.gg")
+    java = probes.mcstatus_java(java_host, 25565, timeout=20)
     assert isinstance(java["ok"], bool) and "source" in java, java
-    bedrock = probes.mcstatus_bedrock("laurel-onion.tun.ply.gg", 19132, timeout=20)
+    bedrock = probes.mcstatus_bedrock(bedrock_host, 19132, timeout=20)
     assert isinstance(bedrock["ok"], bool), bedrock
     print(f"ok mcstatus java={java['ok']}:{java.get('error','')[:30]} bedrock={bedrock['ok']}:{bedrock.get('error','')[:30]}")
 
