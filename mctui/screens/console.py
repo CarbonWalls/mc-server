@@ -86,7 +86,7 @@ class console(Screen):
                                                         width - 4), attr)
         self.footer(win, [
             ("enter", "send"), ("↑↓", "history"), ("pgup/pgdn", "scroll"),
-            ("esc", "clear line"), ("?", "help"), ("q", "back"),
+            ("esc", "clear line / back"), ("?", "help"),
         ])
 
     def _output_lines(self) -> list:
@@ -99,14 +99,15 @@ class console(Screen):
 
     # --- input --------------------------------------------------------
     def handle_key(self, key):
-        # quit only from an empty prompt; escape clears the line instead
-        if key in (ord("q"), 27):
-            if key == 27 and self.edit.value != "":
+        # The command prompt is always focused, so every printable key (q
+        # included) has to type - otherwise no command can begin with q and
+        # 'q to leave' eats the first letter of anything you type. Esc is the
+        # only way out: it clears a non-empty line, and leaves when empty.
+        if key == 27:
+            if self.edit.value != "":
                 self.edit.value = ""
                 self.edit.cursor = 0
                 self.hist_index = None
-                return None
-            if key == 27:
                 return None
             return "back"
         if is_enter(key):

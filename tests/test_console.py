@@ -195,6 +195,13 @@ def test_tui_console_screen():
         text = log.read_text()
         assert "CMD: list" in text, f"command lost on the way: {text!r}"
         assert "CMD: say hello" in text
+        # a command that starts with 'q': the prompt is always focused, so the
+        # q must type rather than leave the screen (the pre-fix behaviour sent
+        # you back to the dashboard and swallowed the whole line)
+        os.write(master, b"query-thing\r")
+        pump(1.5)
+        assert "CMD: query-thing" in log.read_text(), \
+            "a command starting with q never reached the server"
     finally:
         for _ in range(8):
             if tui.poll() is not None:

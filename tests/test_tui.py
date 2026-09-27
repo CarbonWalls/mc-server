@@ -126,7 +126,11 @@ def quit_loop(proc, master, out, rounds=8):
     for _ in range(rounds):
         if proc.poll() is not None:
             return
-        os.write(master, b"\x1b")
+        # two Escapes first: the first closes an open field or dialog (and
+        # clears the console's command line), the second leaves the screen.
+        # The console can no longer use q to leave - its prompt is always
+        # focused, so q has to type - which is why q is only a fallback here.
+        os.write(master, b"\x1b\x1b")
         pump(master, 0.35, out)
         if proc.poll() is not None:
             return
