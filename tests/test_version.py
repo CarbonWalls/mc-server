@@ -4,11 +4,21 @@ import sys
 import tarfile
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import download, version
+from mctui.core import download, version  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_version"
+TMP = ROOT / "tmp_version"
+
+
+def setup():
+    if TMP.exists():
+        shutil.rmtree(TMP)
+    mctui_test_env.seed(ROOT)
 
 
 def test_min_java():
@@ -183,25 +193,32 @@ def test_set_active_jdk():
         assert version.set_active_jdk(fake) is True
         assert link.is_symlink() and Path(os.readlink(link)) == fake
     finally:
+        if link.is_symlink() or link.exists():
+            link.unlink()
         if original:
-            if link.is_symlink() or link.exists():
-                link.unlink()
             link.symlink_to(original)
         shutil.rmtree(TMP, ignore_errors=True)
-    assert Path(os.readlink(link)) == Path(original)
-    print("ok set_active_jdk (restored)")
+    if original:
+        assert Path(os.readlink(link)) == Path(original)
+        print("ok set_active_jdk (restored)")
+    else:
+        print("ok set_active_jdk (no pre-existing jdk/current to restore)")
 
 
 def main():
-    test_min_java()
-    test_detect_version()
-    test_paper_versions()
-    test_paper_builds()
-    test_adoptium()
-    test_plugins()
-    test_install_jdk_extract()
-    test_set_active_jdk()
-    print("PASS version")
+    setup()
+    try:
+        test_min_java()
+        test_detect_version()
+        test_paper_versions()
+        test_paper_builds()
+        test_adoptium()
+        test_plugins()
+        test_install_jdk_extract()
+        test_set_active_jdk()
+        print("PASS version")
+    finally:
+        mctui_test_env.discard(ROOT)
 
 
 if __name__ == "__main__":

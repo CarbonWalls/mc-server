@@ -20,6 +20,7 @@ class GameplayStep(Step):
         ("pvp", "pvp on/off", "bool"),
         ("white-list", "whitelist on/off", "bool"),
         ("online-mode", "online-mode (premium accounts)", "bool"),
+        ("enforce-secure-profile", "enforce-secure-profile (chat signing)", "bool"),
         ("view-distance", "view distance", "int"),
         ("simulation-distance", "simulation distance", "int"),
     ]
@@ -41,6 +42,7 @@ class GameplayStep(Step):
                 "pvp": "true",
                 "white-list": "false",
                 "online-mode": "true",
+                "enforce-secure-profile": "false",
                 "view-distance": str(preset["view"]),
                 "simulation-distance": str(preset["simulation"]),
             }
@@ -282,7 +284,7 @@ class PluginsStep(Step):
 class ReviewStep(Step):
     key = "review"
     title = "review"
-    hint = "everything below is written to instances/<id>"
+    hint = "check the location and settings, then press -> to build"
     widget = None
 
     def on_enter(self, wiz):

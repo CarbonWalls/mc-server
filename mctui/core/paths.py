@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(os.environ.get("MCTUI_ROOT") or Path(__file__).resolve().parents[2]).resolve()
 
 SETTINGS_FILE = "tui_settings.json"
 MAIN_INSTANCE_ID = "main"
@@ -85,14 +85,32 @@ def playit_secret() -> Path:
     return data_dir() / "playit.toml"
 
 
+def resolve_path(stored) -> Path:
+    """The ONE place a stored instance location becomes an absolute path.
+
+    Relative paths resolve against the project root; absolute paths are used
+    as given, so a server can live anywhere on disk. ``..`` segments are
+    normalised so a relative location cannot escape the root by spelling.
+    An empty stored value means "the project root itself".
+    """
+    if not stored:
+        return PROJECT_ROOT
+    p = Path(str(stored))
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return Path(os.path.normpath(str(p)))
+
+
 def instance_path(instance_id: str, index: dict | None = None) -> Path:
     if instance_id == MAIN_INSTANCE_ID:
         return server_dir()
     if index:
         for inst in index.get("instances", []):
             if inst.get("id") == instance_id:
-                return PROJECT_ROOT / inst.get("path", "")
-    return instances_dir() / instance_id
+                stored = inst.get("path")
+                return resolve_path(stored) if stored else resolve_path(f"instances/{instance_id}")
+    # an unknown id falls back to the documented default location
+    return resolve_path(f"instances/{instance_id}")
 
 
 def log_paths(instance_id: str) -> dict:

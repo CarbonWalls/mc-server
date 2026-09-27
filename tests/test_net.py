@@ -8,11 +8,15 @@ import time
 import shutil
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import download, probes
+from mctui.core import download, probes  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_net"
+TMP = ROOT / "tmp_net"
 STATUS_JSON = {
     "version": {"name": "1.21.11", "protocol": 771},
     "players": {"max": 20, "online": 2, "sample": [{"name": "Notch"}, {"name": "Steve"}]},
@@ -197,6 +201,7 @@ def main():
         print("PASS net/probes")
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
+        mctui_test_env.discard(ROOT)
 
 
 if __name__ == "__main__":

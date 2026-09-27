@@ -16,7 +16,12 @@ import sys
 import termios
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+mctui_test_env.seed(ROOT)
+
+# state files are test artifacts, not project state: keep them out of the tree
 TMP = pathlib.Path("/tmp/opencode/tui-tests")
 TMP.mkdir(parents=True, exist_ok=True)
 
@@ -39,6 +44,7 @@ if not UP:
 SCREENS = {
     "dashboard": ["mc-tui"],
     "control": ["server control"],
+    "console": ["console"],
     "logs": ["logs"],
     "backup": ["backups"],
     "diag": ["diagnostics"],
@@ -60,8 +66,8 @@ def spawn(screen, rows=34, cols=110):
                MCTUI_STATE_FILE=str(state), LINES=str(rows), COLUMNS=str(cols))
     proc = subprocess.Popen(
         [sys.executable, "mc_tui.py", "--screen", screen],
-        cwd=ROOT, stdin=slave, stdout=slave, stderr=subprocess.PIPE, env=env,
-        close_fds=True)
+        cwd=mctui_test_env.PROJECT, stdin=slave, stdout=slave,
+        stderr=subprocess.PIPE, env=env, close_fds=True)
     os.close(slave)
     return proc, master, state
 
@@ -200,17 +206,21 @@ def test_create_wizard():
         return read_state(state).get("step") == step
 
     if not errors:
-        if not tap_until(3, b"\r", 30):          # version list loads, then pick it
+        # steps: 1 name, 2 location, 3 version, 4 build, 5 perf, 6 gameplay,
+        # 7 network, 8 plugins, 9 review
+        if not tap_until(3, b"\r", 30):          # location default is fine
+            errors.append(f"version step not reached: {read_state(state)}")
+        elif not tap_until(4, b"\r", 30):        # version list loads, pick it
             errors.append(f"build step not reached: {read_state(state)}")
-        elif not tap_until(4, b"\r", 10):        # build is preselected
+        elif not tap_until(5, b"\r", 10):        # build is preselected
             errors.append(f"perf step not reached: {read_state(state)}")
-        elif not tap_until(5, b"\r", 10):        # pick perf preset
+        elif not tap_until(6, b"\r", 10):        # pick perf preset
             errors.append(f"gameplay step not reached: {read_state(state)}")
-        elif not tap_until(6, RIGHT, 10):        # gameplay -> network
+        elif not tap_until(7, RIGHT, 10):        # gameplay -> network
             errors.append(f"network step not reached: {read_state(state)}")
-        elif not tap_until(7, RIGHT, 30):        # network -> plugins (resolve over net)
+        elif not tap_until(8, RIGHT, 30):        # network -> plugins (resolve over net)
             errors.append(f"plugins step not reached: {read_state(state)}")
-        elif not tap_until(8, RIGHT, 30):        # plugins -> review
+        elif not tap_until(9, RIGHT, 30):        # plugins -> review
             errors.append(f"review step not reached: {read_state(state)}")
         else:
             if "tuidemo" not in visible(out):
@@ -219,7 +229,7 @@ def test_create_wizard():
                 errors.append("build started unexpectedly")
 
     finish(proc, master, out, state, errors, "create-wizard")
-    stray = pathlib.Path(ROOT) / "instances" / "tuidemo"
+    stray = pathlib.Path(os.environ["MCTUI_ROOT"]) / "instances" / "tuidemo"
     if stray.exists():
         shutil.rmtree(stray, ignore_errors=True)
         errors.append("wizard created a stray instance folder (a build ran)")

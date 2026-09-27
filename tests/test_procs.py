@@ -4,14 +4,18 @@ import sys
 import time
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import paths, procs
+from mctui.core import paths, procs  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_procs"
 INSTANCE = "proctest"
 INST_DIR = paths.instances_dir() / INSTANCE
 LOGS = paths.logs_dir()
+TMP = ROOT / "tmp_procs"
 
 
 def cleanup():
@@ -25,7 +29,8 @@ def cleanup():
 
 
 def test_status_helpers():
-    assert paths.java_bin().is_file()
+    if mctui_test_env.java_available():
+        assert paths.java_bin().is_file()
     assert procs.read_pid(LOGS / "does-not-exist") is None
     me = os.getpid()
     assert procs.pid_alive(me)
@@ -133,12 +138,14 @@ def test_stale_detection():
 
 def main():
     cleanup()
+    mctui_test_env.seed(ROOT)
     test_status_helpers()
     test_command_build()
     test_missing_paths()
     test_start_stop_cycle()
     test_stale_detection()
     cleanup()
+    mctui_test_env.discard(ROOT)
     print("PASS procs")
 
 

@@ -2,7 +2,7 @@ import curses
 import time
 from pathlib import Path
 
-from ..core import config, instances, paths, procs
+from ..core import config, console as console_core, instances, paths, procs
 from ..ui import theme as th
 from ..ui import widgets as w
 from ._base import Screen
@@ -139,7 +139,12 @@ class config_editor(Screen):
                 self._say("text files are read-only here", "warn")
                 return None
             self.mode = "value"
-            self.edit = w.TextEdit(value, label=f"{key_name} =")
+            restart = console_core.RESTART_KEYS.get(key_name)
+            if restart:
+                self.edit = w.TextEdit(value, label=f"{key_name} = "
+                                                   f"[needs restart: {restart}]")
+            else:
+                self.edit = w.TextEdit(value, label=f"{key_name} =")
         return None
 
     def _validate_key(self, raw):
@@ -163,7 +168,13 @@ class config_editor(Screen):
             props = config.read_properties(self.path)
             props[key_name] = value
             result = config.write_properties(self.path, props)
-            self._say(f"saved {key_name}" if result else "write failed",
+            restart = console_core.RESTART_KEYS.get(key_name)
+            message = f"saved {key_name}"
+            if restart:
+                message += f" - takes effect on the next start ({restart})"
+                if procs.server_status(self.ctx.instance_id).get("state") == "running":
+                    message += "; the running server is unchanged"
+            self._say(message if result else "write failed",
                       "ok" if result else "err")
         elif self.kind == "yaml":
             key_name = self.rows[self.list.index][0]

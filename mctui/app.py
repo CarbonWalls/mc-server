@@ -13,6 +13,7 @@ from .ui.panels import spinner_char
 SCREENS = {
     "dashboard": ("Dashboard", "dashboard"),
     "control": ("Server control", "server_control"),
+    "console": ("Console", "console"),
     "create": ("Create server", "create_server"),
     "instances": ("Instances", "instances"),
     "players": ("Players", "players"),

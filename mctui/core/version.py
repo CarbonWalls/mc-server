@@ -95,9 +95,14 @@ def min_java_for(version_key: str) -> int:
     return 8
 
 
-def _gql(query: str) -> dict:
+def _gql(query: str, job=None, message: str = "") -> dict:
     import json
 
+    if job is not None:
+        # Phase 5: these queries are the first thing every wizard build waits
+        # on. Without a progress tick the bar sits frozen and the tool looks
+        # hung for several seconds on a slow link.
+        job.update(0.10, message or "querying the Paper downloads service")
     payload = json.dumps({"query": query}).encode()
     data = download.fetch_json(
         GRAPHQL_URL,
@@ -107,6 +112,8 @@ def _gql(query: str) -> dict:
     )
     if data.get("errors"):
         raise download.DownloadError("; ".join(e.get("message", "error") for e in data["errors"]))
+    if job is not None:
+        job.update(0.30, message or "paper metadata received")
     return data.get("data", {})
 
 
@@ -138,9 +145,9 @@ def _build_node(node: dict) -> dict:
     }
 
 
-def paper_versions(limit: int = 20) -> list:
+def paper_versions(limit: int = 20, job=None) -> list:
     query = VERSIONS_QUERY.replace("{limit}", str(limit))
-    data = _gql(query)
+    data = _gql(query, job, "fetching paper versions")
     out = []
     for edge in data["project"]["versions"]["edges"]:
         node = edge["node"]
@@ -152,12 +159,14 @@ def paper_versions(limit: int = 20) -> list:
         entry["min_java"] = min_java_for(entry["key"])
         entry["release"] = _looks_release(entry["key"])
         out.append(entry)
+    if job is not None:
+        job.update(1.0, f"{len(out)} paper versions")
     return out
 
 
-def paper_builds(version_key: str, limit: int = 15) -> list:
+def paper_builds(version_key: str, limit: int = 15, job=None) -> list:
     query = BUILDS_QUERY.replace("{key}", version_key).replace("{limit}", str(limit))
-    data = _gql(query)
+    data = _gql(query, job, f"fetching builds for {version_key}")
     version = data.get("project", {}).get("version") or {}
     edges = ((version.get("builds") or {}).get("edges") or [])
     out = []
@@ -165,6 +174,8 @@ def paper_builds(version_key: str, limit: int = 15) -> list:
         entry = _build_node(edge["node"])
         entry["min_java"] = min_java_for(version_key)
         out.append(entry)
+    if job is not None:
+        job.update(1.0, f"{len(out)} builds for {version_key}")
     return out
 
 

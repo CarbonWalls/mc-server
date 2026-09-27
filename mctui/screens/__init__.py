@@ -1,5 +1,6 @@
 from .backups import backups
 from .config_editor import config_editor
+from .console import console
 from .create_server import create_server
 from .dashboard import dashboard
 from .diagnostics import diagnostics

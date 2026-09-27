@@ -2,7 +2,7 @@ import platform
 import sys
 import time
 
-from ..core import instances, paths, playit_ipc, probes, procs, version
+from ..core import config, instances, paths, playit_ipc, probes, procs, version
 from ..ui import theme as th
 from ..ui import widgets as w
 from ._base import Screen
@@ -16,6 +16,7 @@ class diagnostics(Screen):
         self.focus_at = 0.0
         self.notice = ""
         self.notice_until = 0.0
+        self.port_edit = None
         self.rebuild()
 
     def _say(self, text, level="info", ttl=5.0):
@@ -54,6 +55,14 @@ class diagnostics(Screen):
         lines.append(f"== instance {instance} ==")
         for label, value in instances.summary(entry) or []:
             lines.append(f"{label:<12}{value}")
+        bedrock_port = entry.get("bedrock_port")
+        geyser_cfg = paths.instance_path(instance) / "plugins" / "Geyser-Spigot" / "config.yml"
+        if geyser_cfg.is_file():
+            broadcast = config.yaml_get_file(geyser_cfg, ["advanced", "bedrock", "broadcast-port"])
+            lines.append(f"{'bedrock pub':<12}{broadcast or '-'}")
+            lines.append(f"{'geyser cfg':<12}{paths.relative(geyser_cfg)}")
+        if bedrock_port:
+            lines.append(f"{'index port':<12}{bedrock_port}")
         lines.append("")
         lines.append(f"== processes ==")
         status = procs.server_status(instance)
@@ -86,15 +95,30 @@ class diagnostics(Screen):
         if self.notice and time.time() < self.notice_until:
             lines.append("")
             lines.append(f"!! {self.notice}")
-        self.scroll.render(win, 3, 1, max(5, height - 6), width - 2, self.theme,
+        scroll_h = max(5, height - 6)
+        if self.port_edit is not None:
+            scroll_h = max(4, scroll_h - 3)
+        self.scroll.render(win, 3, 1, scroll_h, width - 2, self.theme,
                            "report", lines=lines, highlight="!!")
+        if self.port_edit is not None:
+            self.port_edit.render(win, 3 + scroll_h + 1, 1,
+                                  min(width - 2, 72), self.theme)
         self.footer(win, [
             ("p", "java ping"), ("b", "bedrock ping"), ("w", "status API (java)"),
-            ("e", "status API (bedrock)"), ("i", "playit ipc"), ("r", "reload"),
-            ("?", "help"), ("q", "back"),
+            ("e", "status API (bedrock)"), ("i", "playit ipc"), ("o", "tunnel port"),
+            ("r", "reload"), ("?", "help"), ("q", "back"),
         ])
 
     def handle_key(self, key):
+        if self.port_edit is not None:
+            action = self.port_edit.handle_key(key)
+            if action == "submit":
+                self._apply_tunnel_port(self.port_edit.value)
+                self.port_edit = None
+            elif key == 27:
+                self.port_edit = None
+                self._say("port entry cancelled", "info", 2.0)
+            return None
         if key in (ord("q"), 27):
             return "back"
         if key in (ord("r"), ord("R")):
@@ -116,9 +140,46 @@ class diagnostics(Screen):
         if key in (ord("i"), ord("I")):
             self._probe("playit ipc", self._playit)
             return None
+        if key in (ord("o"), ord("O")):
+            current = (instances.get_instance(self.ctx.instance_id) or {}) \
+                .get("bedrock_port") or ""
+            self.port_edit = w.TextEdit(
+                str(current), label="public bedrock port the tunnel assigned",
+                validator=self._validate_port)
+            return None
         page = max(4, self.size(self.ctx.stdscr)[0] - 8)
         self.scroll.handle_key(key, page=page)
         return None
+
+    # --- tunnel port (Defect I) -------------------------------------
+    def _validate_port(self, raw):
+        value = raw.strip()
+        if not value:
+            return ""
+        try:
+            port = int(value)
+        except ValueError:
+            return "port must be a number"
+        if not (1 <= port <= 65535):
+            return "port must be between 1 and 65535"
+        return ""
+
+    def _apply_tunnel_port(self, raw):
+        value = raw.strip()
+        if not value:
+            self._say("no port entered", "warn")
+            return
+        instance = self.ctx.instance_id
+        result = instances.apply_tunnel_port(instance, int(value))
+        if result.get("ok"):
+            if result.get("changed"):
+                self._say(f"bedrock broadcast-port set to {result['port']} "
+                          f"(restart the server to serve it)", "ok", 6.0)
+            else:
+                self._say(f"broadcast-port was already {result['port']}", "ok", 4.0)
+        else:
+            self._say(result.get("error", "could not set the port"), "err", 6.0)
+        self.rebuild()
 
     # --- probes ------------------------------------------------------
     def _probe(self, name, fn):

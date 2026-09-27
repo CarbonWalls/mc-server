@@ -4,11 +4,15 @@ import sys
 import time
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import config, jobs, paths
+from mctui.core import config, jobs, paths  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_foundation"
+TMP = ROOT / "tmp_foundation"
 GEYSER = paths.server_dir() / "plugins" / "Geyser-Spigot" / "config.yml"
 
 # a trimmed but complete Geyser config, modelled on the reference file Geyser
@@ -40,15 +44,19 @@ def setup():
     if TMP.exists():
         shutil.rmtree(TMP)
     TMP.mkdir(parents=True)
+    mctui_test_env.seed(ROOT)
 
 
 def test_paths():
-    assert paths.root().name == "mc-server"
-    assert paths.java_bin().exists()
+    # every path must resolve inside the isolated root, never the live tree
+    assert paths.root() == ROOT
+    assert paths.root() != mctui_test_env.PROJECT
     assert paths.server_dir().is_dir()
     assert paths.log_paths("main")["server_pid"].name == "server.pid"
     assert paths.log_paths("other")["server_pid"].name == "other.pid"
     assert paths.log_paths("other")["server_log"].name == "other.log"
+    if mctui_test_env.java_available():
+        assert paths.java_bin().exists()
     s = paths.load_settings()
     assert s["xms"] == "512M" and s["server_port"] == 25565
     s["xmx"] = "1G"
@@ -191,6 +199,7 @@ def main():
         print("PASS foundation")
     finally:
         shutil.rmtree(TMP, ignore_errors=True)
+        mctui_test_env.discard(ROOT)
 
 
 if __name__ == "__main__":

@@ -93,8 +93,8 @@ class server_control(Screen):
 
         self.footer(win, [
             ("s", "start"), ("x", "stop"), ("k", "kill"), ("c", "clear stale"),
-            ("d", "playitd"), ("t", "tunnel"), ("l", "logs"), ("p", "ping"),
-            ("?", "help"), ("q", "back"),
+            ("d", "playitd"), ("t", "tunnel"), ("l", "logs"), ("o", "console"),
+            ("p", "ping"), ("?", "help"), ("q", "back"),
         ])
 
     def _actions(self, server_state, playitd_state, tunnel_state) -> list:
@@ -110,6 +110,7 @@ class server_control(Screen):
         actions.append(("t", "stop tunnel attach" if tunnel_state == "running"
                         else "start tunnel attach"))
         actions.append(("l", "open full log viewer"))
+        actions.append(("o", "open the live console (type server commands)"))
         actions.append(("p", "ping 127.0.0.1 and show player count"))
         return actions
 
@@ -148,6 +149,8 @@ class server_control(Screen):
             self._toggle_tunnel()
         elif key == ord("l"):
             return "logs"
+        elif key == ord("o"):
+            return "console"
         elif key == ord("p"):
             self._ping()
         return None

@@ -26,6 +26,14 @@ your friends — they connect via *Multiplayer → Direct Connect*. That's it.
 
 Stop it with `./stop.sh` (saves the world cleanly).
 
+Prefer a mouse? After `setup.sh`, the same controls run in a browser:
+
+```bash
+python3 mc_tui.py --web     # serves http://127.0.0.1:8080 (start/stop/console/players)
+```
+
+It only listens on this machine, and closing it does not stop the server.
+
 ### From a completely raw machine
 
 If the folder is a fresh checkout with nothing downloaded yet, `mctui` can take
@@ -35,6 +43,7 @@ but driven from Python so it reports progress and is resumable:
 ```bash
 python3 mc_tui.py --doctor      # what's present, what's missing (changes nothing)
 python3 mc_tui.py --bootstrap   # download + configure everything into this folder
+python3 mc_tui.py --check       # is this tree ready to host a server? exits non-zero if not
 ```
 
 `--bootstrap` is idempotent: every artifact it finds on disk is reused, and the
@@ -44,6 +53,13 @@ only writes inside this folder — no `pip`, no root, no system-wide installs. I
 also writes the Geyser config for the playit tunnel (Bedrock on 19132,
 proxy-protocol v2, `broadcast-port` = the tunnel's public port); see
 [`docs/PORT_SETUP.md`](docs/PORT_SETUP.md).
+
+`--check` reports each requirement individually (Python + curses, a writable
+root, a Java runtime, the instance index, an active instance, the Paper jar,
+tunnel binaries, the playit secret) and says what to do about any that are
+missing. It never prints "all good" unless hosting would actually work — an
+empty checkout imports fine but cannot run anything, so importing is not the
+test.
 
 ## How "reachable from anywhere" works
 
@@ -118,7 +134,10 @@ login that ties the agent to your account. It happens exactly once.
   formed RakNet Unconnected Ping from the open internet gets a 161-byte pong.
   Geyser listens on the default **UDP 19132**, which is where the playit
   Minecraft-Bedrock tunnel forwards; `broadcast-port` is set to the tunnel's
-  public port so Bedrock clients are pointed at it. If you move Geyser to
+  public port so Bedrock clients are pointed at it. When playit assigns you a
+  public Bedrock port, tell the manager once (diagnostics screen, `o`, or
+  `POST /api/instances/settings` on the web API) and it rewrites
+  `broadcast-port` for you. If you move Geyser to
   another port, set the tunnel destination to match and update `bedrock.port`
   + `broadcast-port` in `plugins/Geyser-Spigot/config.yml`. LAN Bedrock players
   use this machine's local IP on port **19132**.
@@ -134,10 +153,12 @@ mc-server/
 ├── setup.sh         # downloads everything (idempotent)
 ├── start.sh         # starts server + tunnel (env: TUNNEL, XMS, XMX, SERVER_PORT)
 ├── stop.sh          # clean shutdown
+├── webui/           # the frozen browser UI (served by mc_tui.py --web)
 ├── bin/             # bore + playit binaries (local, not on PATH)
 ├── jdk/current/     # Temurin JDK 25 (bundled, not system-wide)
 ├── server/          # Paper jar, world data, plugins (Geyser + Floodgate)
-├── data/            # tunnel state (playit secret, mock listener)
+├── instances/       # extra servers, each self-identifying via .mctui-instance.json
+├── data/            # tui_settings.json, roots.json, playit secret, console sockets
 └── logs/            # server.log, tunnel.log, startup logs
 ```
 
@@ -155,10 +176,16 @@ mc-server/
 The tunnel address is public — anyone who has it can join. To restrict access:
 
 1. **Enable the whitelist** (in `server/server.properties`): `white-list=true`,
-   then add players from the server console: `whitelist add <username>`
+   then add players from the server console: `whitelist add <username>` (the
+   `console` screen or the browser console, or `/api/console` on the web API)
 2. Set `online-mode=false` **only** if you understand the impersonation risk; with
    it `true`, players must authenticate with a real Minecraft account.
 3. `enable-query=false` and `enable-rcon=false` are already set.
+
+When you edit `server.properties` through the config editor, keys that vanilla
+Paper only reads at startup (the port, `online-mode`, `level-type`, …) are
+labelled *needs restart* before you commit, and the save message says so again
+if the server is running at the time.
 
 ## Notes & caveats
 
@@ -184,21 +211,23 @@ A curses front-end for everything above, written with **Python stdlib only**
 ```
 python3 mc_tui.py                 # dashboard
 python3 mc_tui.py --screen logs    # start on a specific screen
-python3 mc_tui.py --check          # import every module (no terminal needed)
+python3 mc_tui.py --check          # can this tree host a server? (no terminal needed)
 python3 mc_tui.py --doctor         # check this machine, change nothing
 python3 mc_tui.py --bootstrap      # install everything from zero, resumable
+python3 mc_tui.py --web            # browser UI + API instead of the terminal UI
 ```
 
 | Screen        | What it does |
 |---------------|--------------|
 | `dashboard`   | live status (server/playitd/tunnel/disk), menu, quick ping |
 | `control`     | start / stop / force-kill / clear stale pid, playitd + tunnel toggles, heap, recent log |
-| `create`      | 8-step wizard: id → Paper version → build → memory preset → gameplay → network → plugins → review → build |
+| `console`     | the live server console: type commands (`say`, `whitelist add …`), they go straight to the server's stdin |
+| `create`      | 9-step wizard: id → display name → install location → Paper build → memory preset → gameplay → network → plugins → review |
 | `instances`   | list / activate / clone / rename / delete, change Paper version |
 | `players`     | online list, whitelist, ops, bans (add/remove, toggle whitelist) |
 | `logs`        | every log file, live tail, filter, snapshot, clear |
 | `backup`      | create / restore / delete / purge, free-space + >50 % confirm |
-| `diag`        | host + java + process report, optional network probes (status API, RakNet, playit IPC) |
+| `diag`        | host + java + process report, tunnel-port sync, optional network probes (status API, RakNet, playit IPC) |
 | `config`      | edit `server.properties`, Geyser `config.yml`, view `eula.txt` |
 | `settings`    | `data/tui_settings.json` (heap, ports, tunnel, active instance, java override) |
 
@@ -206,9 +235,11 @@ Keys: `↑↓/jk` move · `⏎` open/select · `←→` back/next (wizard) · `1
 `/` filter (logs) · `t` follow (logs) · `q` back · `?` help · `Ctrl-C` quit.
 
 **What it changes.** Only these paths: `data/tui_settings.json` (+`.bak`),
-`instances/*`, `backups/*`, `logs/*`, `plugins/*` of the active instance, and
-`instances/active`. Every file write goes through `mctui/core/config.py`,
-which keeps a `.bak` next to the original.
+`data/roots.json` (the list of folders searched for instances),
+`data/console-<instance>.{sock,pid,history}`, `instances/*`, `backups/*`,
+`logs/*`, `plugins/*` of the active instance, and `instances/active`. Every
+config write goes through `mctui/core/config.py`, which keeps a `.bak` next to
+the original.
 
 **What it does not touch.** `start.sh`, `stop.sh`, `watch-tunnel.sh`,
 `setup.sh`, the bundled JDK layout, or the playit secret.
@@ -221,11 +252,46 @@ the same pid file, so `stop.sh` and `watch-tunnel.sh` still behave.
 instance is current; `start.sh` continues to launch `server/` unless you export
 `TUNNEL`/`XMS` yourself.
 
+**Quitting never stops the server.** The server runs in its own process group,
+so closing the TUI (or the browser UI, or the SSH session it was started from)
+leaves it running and your players connected. Only an explicit *stop*
+(the TUI's stop action, `./stop.sh`, or a `SIGTERM` to the pid in
+`logs/server.pid`) saves the world and shuts it down. The console keeps working
+after you quit too: the server's stdin is held by a small detached relay
+(`data/console-<instance>.sock` + `.pid`), so a later TUI or browser session
+reconnects and keeps typing. When the server exits, the relay notices and
+removes the socket itself — nothing is left behind.
+
 **Tests.** `python3 tests/test_*.py` — foundation/config, processes, network +
 probes, versions/downloads, a flaky-link download test (retry + HTTP-range
-resume against a local stdlib server), logs/backups/instances/players, and a
-pty-driven smoke test that walks every screen plus the create wizard (metadata
-only, it stops before any jar download).
+resume against a local stdlib server), logs/backups/instances/players, the
+console relay (commands reach a fake server end to end and the socket is
+cleaned up on stop), the web backend (every endpoint the browser UI uses,
+including the SSE stream, against an isolated tree), and a pty-driven smoke
+test that walks every screen plus the create wizard (metadata only, it stops
+before any jar download). Every test runs against a throwaway tree via
+`tests/mctui_test_env.py` (`MCTUI_ROOT`), never the live checkout.
+
+## Browser UI — `--web`
+
+A second front-end for the same manager, served from this folder with the
+Python standard library only (`http.server`, no framework, no build step):
+
+```bash
+python3 mc_tui.py --web                    # http://127.0.0.1:8080
+python3 mc_tui.py --web --web-port 9000    # pick a port
+```
+
+It serves the frozen single-file page in `webui/index.html` and the JSON API it
+talks to: status, instances, start/stop/kill, the console, players and bans,
+backups, tunnels, jobs, and an SSE stream (`/api/events`) that pushes status,
+log lines, player changes and job progress to the browser. Open it with
+`?mock=1` to click through the whole UI against a built-in dataset, with no
+server and no network — it is the fastest way to see what the UI does.
+
+The server binds to **127.0.0.1 only** on purpose: the page can send console
+commands to your server, so it must not be public. `--web-host 0.0.0.0` is
+refused unless you set `MCTUI_WEB_ALLOW_PUBLIC=1`, and even then it warns.
 
 ### Assumptions & limitations
 
@@ -233,11 +299,15 @@ only, it stops before any jar download).
   uses `java.auth-type: offline`); whitelist/ops/ban edits are written while the
   server may be running — restart it (or `reload`) to apply.
 - Changing `server_port` / `bedrock_port` in settings only affects future
-  launches and the tunnel's local target; `server/server.properties` must match.
+  launches and the tunnel's local target; `server.properties` is rewritten to
+  match at every start, so the properties file and the tunnel can never drift
+  apart and forward to a port nothing is listening on.
 - The create wizard needs network for Paper metadata + plugin resolution; a
   build fails without it (no offline mirror cache yet).
 - Backups are `tar.gz` of the whole instance folder; restoring while the server
   is running is refused.
 - Force-kill (`k`) is SIGKILL: the world keeps the last autosave only.
 - Screen sizes below ~40×16 are not usable; the layout is built for a terminal
-  of at least 80×24.
+  of at least 80×24. The browser UI has no such constraint.
+- The web UI is not authenticated. It binds to 127.0.0.1 for that reason; do
+  not expose it to a network you do not trust.
