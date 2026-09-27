@@ -263,6 +263,10 @@ h3 { font-size: 13px; font-weight: 600; }
   box-shadow: var(--shadow-sm);
   min-width: 0;
 }
+/* The state banner on the Connect screen: a left-edge accent so "where am I"
+   in the setup is visible without reading every card. */
+.card.conn-state { border-left: 3px solid var(--warn); }
+.card.conn-state.is-ok { border-left-color: var(--ok); }
 .card-h {
   display: flex;
   align-items: center;
@@ -522,6 +526,47 @@ select.input {
 /* ---------- Table ---------- */
 .table-wrap { overflow-x: auto; margin: 0 -16px -15px; padding: 0 16px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+/* Small screens: the Servers table is eight columns wide (about 1100px) and
+   only ever scrolls horizontally, which is unreadable on a phone. The
+   lower-priority columns drop out below 900px - the id and path already sit
+   under the server name, and the table stops scrolling. Per column, not per
+   table, so a screen that hides Servers' Path still shows its State. */
+@media (max-width: 900px) {
+  .servers-table .c-path, .servers-table .c-paper,
+  .servers-table .c-tunnel, .servers-table .c-bedrock,
+  .servers-table .c-created { display: none; }
+}
+/* the tunnels table on Connect: "Proto" is implied by the edition (Bedrock is
+   always UDP, Java always TCP) and "Forwards to" is only needed while you are
+   still setting things up, so both drop out below 640px - the address is what
+   a player actually needs, and it is the widest field */
+@media (max-width: 640px) {
+  .c-proto, .c-dest { display: none; }
+}
+/* a backup's size and date are secondary to its name and the restore buttons */
+@media (max-width: 560px) {
+  .c-size { display: none; }
+  .backups-table .c-created { display: none; }
+}
+/* the row's action buttons used to sit on one nowrap line, which alone made
+   the table ~700px wide; let them fold into two lines instead */
+/* the row's action buttons used to sit on one nowrap line, which alone made
+   the table ~700px wide; let them fold into two lines instead.
+   Below 640px the Servers table stops being a table: each server becomes a
+   stacked block. Name and state on their own lines, actions full-width -
+   nothing scrolls, and all eight columns' worth of information is either on
+   the block or one tap away (the path is the title tooltip on the id). */
+@media (max-width: 640px) {
+  td.actions { white-space: normal; }
+  td.actions .btn { margin: 1px 2px; }
+  .servers-table thead { display: none; }
+  .servers-table tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .servers-table tr:last-child { border-bottom: 0; }
+  .servers-table td { display: block; border: 0; padding: 2px 0; text-align: left; }
+  .servers-table td.actions { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .servers-table td.actions .btn + .btn { margin-left: 0; }
+}
+td.actions .btn + .btn { margin-left: 5px; }
 th {
   text-align: left;
   padding: 8px 10px;
@@ -537,7 +582,6 @@ td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: midd
 tbody tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--surface-2); }
 td.actions { text-align: right; white-space: nowrap; }
-td.actions .btn + .btn { margin-left: 5px; }
 .mono { font-family: var(--mono); font-size: 11.5px; }
 
 /* ---------- Address ---------- */

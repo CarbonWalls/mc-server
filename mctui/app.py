@@ -104,8 +104,9 @@ class AppContext:
         self.toasts.append((str(text), level, time.time() + ttl))
         self.toasts = self.toasts[-4:]
 
-    def run_job(self, name: str, fn, *args, on_done=None, **kwargs):
-        job = self.jobs.run(name, fn, *args, **kwargs)
+    def run_job(self, name: str, fn, *args, on_done=None, silent: bool = False,
+                **kwargs):
+        job = self.jobs.run(name, fn, *args, silent=silent, **kwargs)
         if on_done is not None:
             self._callbacks[job.id] = on_done
         return job
@@ -113,10 +114,13 @@ class AppContext:
     def drain_jobs(self) -> None:
         for job in self.jobs.poll():
             cb = self._callbacks.pop(job.id, None)
-            if job.ok:
-                self.notify(f"{job.name}: done", "ok", 4.0)
-            else:
-                self.notify(f"{job.name}: {job.error}", "err", 8.0)
+            # silent jobs are background refreshes (tunnel status, heap stats):
+            # they run every few seconds and would spam the toast line
+            if not job.silent:
+                if job.ok:
+                    self.notify(f"{job.name}: done", "ok", 4.0)
+                else:
+                    self.notify(f"{job.name}: {job.error}", "err", 8.0)
             if cb is not None:
                 try:
                     cb(job)

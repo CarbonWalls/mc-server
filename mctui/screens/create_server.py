@@ -88,6 +88,10 @@ class create_server(Screen):
         height, width = self.size(win)
         if self.phase == "wizard":
             self.wiz.render(win, self.theme)
+            if self.confirm is not None:
+                # the dialog was created but never drawn, which looked like the
+                # app had stopped responding to q
+                self.confirm.render(win, self.theme)
             return
         if self.phase == "building":
             self.header(win, "create server", f"building {self.wiz.data.get('name')}")
@@ -152,8 +156,17 @@ class create_server(Screen):
                 if result == "yes":
                     return "back"
                 return None
+            if key == 27:
+                # Esc leaves at once: it is never a text key, so it cannot
+                # collide with a field, and a half-filled wizard is easy to lose
+                # by reflex - one key, one exit, no guessing.
+                return "back"
             action = self.wiz.handle_key(key)
             if action == "quit":
+                # 'q' with no field focused asks first (typing 'q' in a field
+                # just inserts the letter). The dialog renders on top, so the
+                # second q it asks for is visible rather than mysterious; esc
+                # skips the question entirely.
                 now = time.time()
                 if now - self.quit_at < 1.5:
                     return "back"

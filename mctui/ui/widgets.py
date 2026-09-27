@@ -161,20 +161,20 @@ class TextEdit:
             return "edit"
         if key == curses.KEY_LEFT:
             self.cursor = max(0, self.cursor - 1)
-            return None
+            return "edit"
         if key == curses.KEY_RIGHT:
             self.cursor = min(len(self.value), self.cursor + 1)
-            return None
+            return "edit"
         if key == curses.KEY_HOME:
             self.cursor = 0
-            return None
+            return "edit"
         if key == 21:
             self.value = ""
             self.cursor = 0
             return "edit"
         if key == curses.KEY_END:
             self.cursor = len(self.value)
-            return None
+            return "edit"
         if isinstance(key, int) and 32 <= key < 127:
             char = chr(key)
             if len(self.value) < 240:
@@ -188,20 +188,21 @@ class TextEdit:
         if show_label and self.label:
             th.safe_addstr(win, row, x, th.trunc(self.label, width), theme.accent)
             row += 1
-        field = " " + self.value + " "
-        field = th.trunc(field, width - 2)
-        attr = theme.err if self.error else theme.border
-        try:
-            win.attron(attr)
-            th.safe_addstr(win, row, x, field.ljust(width - 1), attr)
-            win.attroff(attr)
-        except curses.error:
-            pass
-        cursor_x = x + 1 + min(self.cursor, max(0, width - 4))
-        try:
-            win.move(row, cursor_x)
-        except curses.error:
-            pass
+        # Visible affordance: the field is bracketed and shows a block cursor.
+        # The app disables curses' own cursor (curs_set(0)) and a plain dim row
+        # is easy to mistake for a label, which left users unsure whether they
+        # were "in" the field at all.
+        edge = theme.err if self.error else (theme.accent if self.active else theme.border)
+        inner_w = max(4, width - 2)
+        field = th.trunc(self.value, inner_w - 1)
+        th.safe_addstr(win, row, x, "[", edge)
+        th.safe_addstr(win, row, x + 1 + inner_w, "]", edge)
+        th.safe_addstr(win, row, x + 1, field.ljust(inner_w), theme.plain)
+        if self.active:
+            pos = min(self.cursor, inner_w - 1)
+            cursor_x = x + 1 + pos
+            char = field[pos] if pos < len(field) else " "
+            th.safe_addstr(win, row, cursor_x, char, curses.A_REVERSE)
         row += 1
         if self.error:
             th.safe_addstr(win, row, x, th.trunc(self.error, width), theme.err)

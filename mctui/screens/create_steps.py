@@ -22,11 +22,14 @@ class NameStep(Step):
                        theme.dim)
 
     def handle_key(self, wiz, key):
-        if self.widget.handle_key(key) == "submit":
+        result = self.widget.handle_key(key)
+        if result == "submit":
             wiz.data["name"] = self.widget.value.strip()
             wiz.data.setdefault("display", wiz.data["name"])
             return "next"
-        return None
+        # 'edit' tells the wizard the key was consumed, so it must not also
+        # navigate on the same keypress
+        return result
 
     def validate(self, wiz):
         return instances.validate_name(str(wiz.data.get("name", "")))
@@ -63,10 +66,11 @@ class LocationStep(Step):
             th.safe_addstr(win, y + 3 + i, x, th.trunc(line, width), theme.dim)
 
     def handle_key(self, wiz, key):
-        if self.widget.handle_key(key) == "submit":
+        result = self.widget.handle_key(key)
+        if result == "submit":
             wiz.data["location"] = self.widget.value.strip()
             return "next"
-        return None
+        return result
 
     def validate(self, wiz):
         return instances.validate_path(str(wiz.data.get("location", "")),

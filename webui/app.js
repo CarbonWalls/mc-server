@@ -1253,16 +1253,16 @@ async function renderServers(container) {
 
       ${rows.length === 0 ? "" : `
       <div class="table-wrap">
-        <table>
+        <table class="servers-table">
           <thead>
             <tr>
               <th scope="col">Server</th>
-              <th scope="col">Path</th>
-              <th scope="col">Paper</th>
-              <th scope="col">Tunnel</th>
-              <th scope="col">Bedrock</th>
+              <th scope="col" class="c-path">Path</th>
+              <th scope="col" class="c-paper">Paper</th>
+              <th scope="col" class="c-tunnel">Tunnel</th>
+              <th scope="col" class="c-bedrock">Bedrock</th>
               <th scope="col">State</th>
-              <th scope="col">Created</th>
+              <th scope="col" class="c-created">Created</th>
               <th scope="col" style="text-align:right">Actions</th>
             </tr>
           </thead>
@@ -1278,21 +1278,21 @@ async function renderServers(container) {
                     : ""}
                   <div class="small muted">${esc(inst.id)}${inst.note ? " — " + esc(inst.note) : ""}</div>
                 </td>
-                <td class="mono small" title="${esc(inst.path)}">
+                <td class="mono small c-path" title="${esc(inst.path)}">
                   ${esc(inst.path)}
                   ${inst.exists === false
                     ? ' <span class="pill danger">folder missing</span>' : ""}
                 </td>
-                <td class="tabular">${esc(inst.paper_version || "—")}
+                <td class="tabular c-paper">${esc(inst.paper_version || "—")}
                   <span class="faint small">${inst.build ? "· build " + esc(inst.build) : ""}</span></td>
-                <td>${esc(TUNNEL_LABELS[inst.tunnel] || inst.tunnel || "none")}</td>
-                <td class="tabular">${inst.bedrock_port ? esc(inst.bedrock_port) : '<span class="faint">—</span>'}</td>
+                <td class="c-tunnel">${esc(TUNNEL_LABELS[inst.tunnel] || inst.tunnel || "none")}</td>
+                <td class="tabular c-bedrock">${inst.bedrock_port ? esc(inst.bedrock_port) : '<span class="faint">—</span>'}</td>
                 <td>
                   <span class="dot ${esc(cls)}" aria-hidden="true" style="margin-right:6px"></span>
                   ${esc(instanceStateLabel(inst))}
                 </td>
-                <td class="small">${esc(fmtDate(inst.created))}</td>
-                <td class="actions">
+                <td class="small c-created">${esc(fmtDate(inst.created))}</td>
+                <td class="actions actions-wrap">
                   ${isActiveInstance(inst.id) ? "" : `
                     <button class="btn btn-sm" type="button" data-activate="${esc(inst.id)}">Activate</button>`}
                   ${running
@@ -2099,12 +2099,12 @@ async function renderBackups(container) {
         </div>
       ` : `
         <div class="table-wrap">
-          <table>
+          <table class="backups-table">
             <thead>
               <tr>
                 <th scope="col">Name</th>
-                <th scope="col">Size</th>
-                <th scope="col">Created</th>
+                <th scope="col" class="c-size">Size</th>
+                <th scope="col" class="c-created">Created</th>
                 <th scope="col" style="text-align:right">Actions</th>
               </tr>
             </thead>
@@ -2112,8 +2112,8 @@ async function renderBackups(container) {
               ${backups.map(b => `
                 <tr>
                   <td class="mono">${esc(b.name)}</td>
-                  <td class="tabular">${fmtBytes(b.size)}</td>
-                  <td>
+                  <td class="tabular c-size">${fmtBytes(b.size)}</td>
+                  <td class="c-created">
                     ${esc(fmtDate(b.stamp))}
                     <span class="faint small"> · ${esc(fmtRel(b.stamp))}</span>
                   </td>
@@ -2924,15 +2924,23 @@ async function renderConnect(container) {
   const bedrockPublic = (bedrockRow && bedrockRow.port) || inst.bedrock_port || "";
 
   // While the agent is up but unclaimed, poll for the claim finishing so this
-  // page advances on its own. navigate() clears the timer on any other screen.
+  // page advances on its own. Also poll when claimed but tunnel-less, so the
+  // addresses show up the moment they are created in the playit dashboard.
+  // navigate() clears the timer on any other screen.
   stopConnectPolling();
-  if (playitd === "running" && !claimed) {
-    let lastClaim = claimUrl;
+  if (playitd === "running" && (!claimed || rows.length === 0)) {
+    let currentClaim = claimUrl;
     state.connectTimer = setInterval(async () => {
       if (state.screen !== "connect") { stopConnectPolling(); return; }
       const t = await apiGet("/api/tunnels");
       if (!t) return;
       state.tunnels = t;
+      if (t.has_secret && (t.tunnels || []).length) {
+        stopConnectPolling();
+        toast("Tunnels are live — you are reachable", "ok", 6000);
+        renderScreen();
+        return;
+      }
       if (t.has_secret) {
         stopConnectPolling();
         toast("Agent claimed — now create the two tunnels", "ok", 6000);
@@ -2940,8 +2948,8 @@ async function renderConnect(container) {
         return;
       }
       const link = t.claim_url || (t.account && t.account.login_link) || "";
-      if (link && link !== lastClaim) {
-        lastClaim = link;
+      if (link && link !== currentClaim) {
+        currentClaim = link;
         renderScreen();
       }
     }, 2500);
@@ -2949,6 +2957,33 @@ async function renderConnect(container) {
 
   container.innerHTML = offlineBanner() + `
     <div class="grid">
+
+      <!-- ===== Where am I? ===== -->
+      <section class="card span-all conn-state ${claimed ? "is-ok" : "is-warn"}"
+               aria-labelledby="conn-state-h">
+        <div class="card-h"><span id="conn-state-h">Connection state</span></div>
+        ${!claimed ? `
+          <p style="margin-bottom:4px"><strong>Agent not claimed yet.</strong></p>
+          <p class="small muted">
+            The agent is running but has no secret tied to a playit account.
+            Open the claim link below once, and this page moves on by itself.
+          </p>
+        ` : rows.length === 0 ? `
+          <p style="margin-bottom:4px"><strong>Agent claimed ✓ — next: create your two tunnels.</strong></p>
+          <p class="small muted">
+            The one-time claim is done and never needs repeating, so no claim
+            link is shown. What is missing is the tunnels — follow the two steps
+            below in the playit dashboard.
+          </p>
+        ` : `
+          <p style="margin-bottom:4px"><strong>Agent claimed ✓ — ${rows.length} tunnel${rows.length === 1 ? "" : "s"} configured.
+            You are reachable.</strong></p>
+          <p class="small muted">
+            Setup is complete; your public addresses are listed below. Nothing
+            else to claim or configure.
+          </p>
+        `}
+      </section>
 
       <!-- ===== The agent ===== -->
       <section class="card" aria-labelledby="conn-agent-h">
@@ -3006,22 +3041,30 @@ async function renderConnect(container) {
           </p>
         ` : `
           <div class="empty" style="padding:10px 0 4px">
-            Waiting for the agent to print a claim link — this takes a moment
-            after it starts.
+            No claim link yet. It is generated by the bundled
+            <code class="mono">playit</code> CLI (not printed by the daemon),
+            so this means <code class="mono">bin/playit</code> is missing or
+            could not run — run <code class="mono">./setup.sh</code> and try
+            again.
           </div>
         `}
         <p class="small faint" style="margin-top:9px">
           This is a browser login on purpose: it ties the agent to your account
           and cannot be automated. Leave this page open — it moves on by itself
-          the moment the claim finishes.
+          the moment the claim finishes. playit only issues a link while the
+          agent is unclaimed, so if you close this page you can get another one
+          by restarting the agent.
         </p>
       </section>
       ` : ""}
 
       ${claimed ? `
       <!-- ===== Create the tunnels ===== -->
+      ${rows.length === 0 ? `
       <section class="card span-all" aria-labelledby="conn-tunnels-h">
-        <div class="card-h"><span id="conn-tunnels-h">Create the tunnels</span></div>
+        <div class="card-h"><span id="conn-tunnels-h">Create the tunnels</span>
+          <span class="pill warn">the only step left</span>
+        </div>
         <p class="small muted">
           Log in at <a href="https://playit.gg" target="_blank"
             rel="noopener noreferrer">playit.gg</a>, open <strong>Agents</strong>,
@@ -3072,6 +3115,7 @@ async function renderConnect(container) {
           connecting to a port nothing answers.
         </p>
       </section>
+      ` : ""}
 
       <!-- ===== Public addresses ===== -->
       <section class="card span-all" aria-labelledby="conn-addr-h">
@@ -3092,8 +3136,8 @@ async function renderConnect(container) {
                 <tr>
                   <th scope="col">Edition</th>
                   <th scope="col">Address</th>
-                  <th scope="col">Proto</th>
-                  <th scope="col">Forwards to</th>
+                  <th scope="col" class="c-proto">Proto</th>
+                  <th scope="col" class="c-dest">Forwards to</th>
                 </tr>
               </thead>
               <tbody>
@@ -3104,8 +3148,8 @@ async function renderConnect(container) {
                     <td class="mono">
                       ${esc(r.host)}${r.port ? ":" + esc(r.port) : ""}
                     </td>
-                    <td>${esc(r.proto)}</td>
-                    <td class="mono small">${esc(r.destination || "—")}</td>
+                    <td class="c-proto">${esc(r.proto)}</td>
+                    <td class="mono small c-dest">${esc(r.destination || "—")}</td>
                   </tr>`;
                 }).join("")}
               </tbody>
@@ -3126,12 +3170,24 @@ async function renderConnect(container) {
 
       <!-- ===== Record the public Bedrock port ===== -->
       <section class="card span-all" aria-labelledby="conn-port-h">
-        <div class="card-h"><span id="conn-port-h">Tell the manager the Bedrock port</span></div>
-        <p class="small muted">
-          Once tunnel 2 exists, playit assigns it a public port. Enter it here
-          and the manager writes Geyser's <code class="mono">broadcast-port</code>
-          so Bedrock clients are sent to the tunnel instead of the local port.
-        </p>
+        <div class="card-h">
+          <span id="conn-port-h">Tell the manager the Bedrock port</span>
+          ${bedrockRow && bedrockRow.port && String(bedrockRow.port) === String(inst.bedrock_port)
+            ? '<span class="pill ok">saved</span>' : ""}
+        </div>
+        ${bedrockRow && bedrockRow.port && String(bedrockRow.port) === String(inst.bedrock_port) ? `
+          <p class="small muted">
+            <code class="mono">broadcast-port</code> is already set to
+            <strong>${esc(bedrockRow.port)}</strong>, matching the Bedrock tunnel.
+            Change it here only if you redo the tunnel.
+          </p>
+        ` : `
+          <p class="small muted">
+            Once tunnel 2 exists, playit assigns it a public port. Enter it here
+            and the manager writes Geyser's <code class="mono">broadcast-port</code>
+            so Bedrock clients are sent to the tunnel instead of the local port.
+          </p>
+        `}
         <div class="row" style="margin-top:12px;gap:8px">
           <input class="input" id="bedrockPortInput" type="number" min="1" max="65535"
                  placeholder="e.g. 6695" value="${esc(bedrockPublic)}"

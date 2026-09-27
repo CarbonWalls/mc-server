@@ -429,10 +429,11 @@ def start_playitd(verbose: bool = True, first_run: bool = False) -> dict:
     if not paths.playit_secret().exists():
         if not first_run:
             return {"ok": False, "error": f"playit secret missing at {paths.playit_secret()}"}
-        # the one-time claim path: a daemon with no secret generates one and
-        # prints https://playit.gg/claim/<code> to its verbose log. That is
-        # exactly what start.sh does, and what the web UI's guided setup needs
-        # on a machine that has never run TUNNEL=playit ./start.sh.
+        # No secret yet: this is the one-time claim path. The daemon itself
+        # does nothing but wait (playitd 1.0.10 logs "Waiting for frontend secret
+        # provisioning over IPC" and idles) - the claim URL is minted by the
+        # playit CLI, see web._claim_link_from_cli and start.sh's start_playit,
+        # both of which mirror each other.
     status = playitd_status()
     if status["state"] == "running":
         return {"ok": False, "error": f"playitd already running as PID {status['pid']}"}

@@ -5,9 +5,10 @@ import traceback
 
 
 class Job:
-    def __init__(self, name: str, job_id: int):
+    def __init__(self, name: str, job_id: int, silent: bool = False):
         self.id = job_id
         self.name = name
+        self.silent = silent
         self.progress = 0.0
         self.message = ""
         self.done = False
@@ -47,10 +48,10 @@ class JobRunner:
         self._events = queue.Queue()
         self._finished = []
 
-    def run(self, name: str, fn, *args, **kwargs) -> Job:
+    def run(self, name: str, fn, *args, silent: bool = False, **kwargs) -> Job:
         with self._lock:
             self._counter += 1
-            job = Job(name, self._counter)
+            job = Job(name, self._counter, silent=silent)
             self._jobs[job.id] = job
 
         def worker():

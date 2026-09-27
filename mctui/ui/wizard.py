@@ -1,6 +1,7 @@
 import curses
 
 from . import theme as th
+from . import widgets as w
 from .widgets import is_back, is_enter, is_left, is_right
 
 
@@ -23,6 +24,18 @@ class Step:
 
     def summary(self, wiz) -> list:
         return []
+
+    def text_edit(self):
+        """The focused TextEdit on this step, or None.
+
+        A step that is editing text must win every printable key (see
+        Wizard.handle_key): the wizard's q/h/l/b/S navigation would otherwise
+        steal characters instead of inserting them.
+        """
+        for attr in (getattr(self, "widget", None), getattr(self, "edit", None)):
+            if isinstance(attr, w.TextEdit) and attr.active:
+                return attr
+        return None
 
 
 class Wizard:
@@ -84,6 +97,25 @@ class Wizard:
         return True
 
     def handle_key(self, key) -> str | None:
+        edit = self.step.text_edit()
+        if edit is not None:
+            # A focused field gets first refusal on the whole key. Every
+            # printable key (q, h, l, b, S included), backspace/delete and the
+            # arrows belong to it; without this the wizard's navigation ate
+            # letters mid-word (typing 'q' popped the leave-dialog instead of
+            # inserting a q). Esc is the one exception, handled below.
+            action = self.step.handle_key(self, key)
+            if action == "next":
+                if self.next():
+                    return "done" if self.finished else "next"
+                return None
+            if action in ("back", "skip", "done"):
+                return action
+            if key == 27:
+                # Esc closes an inline edit if the step keeps one open
+                # (gameplay / network), and leaves the wizard otherwise.
+                return None if self.step.text_edit() is None else "quit"
+            return None
         if key == ord("S"):
             if self.is_last:
                 self.finished = True
@@ -163,6 +195,11 @@ class Wizard:
         elif self.info:
             th.safe_addstr(win, height - 3, 2, th.trunc(f"✓ {self.info}", width - 4), theme.ok)
         footer = [("←/b", "back"), ("→/⏎", "next"), ("S", "skip"), ("q", "quit"), ("?", "help")]
+        if self.step.text_edit() is not None:
+            # while a field is focused the arrows move the cursor, not the
+            # wizard, so say so instead of promising navigation
+            footer = [("⏎", "next"), ("←/→", "cursor"), ("esc", "leave"),
+                      ("?", "help")]
         if extra_footer:
             footer = extra_footer + footer
         theme.keybar(win, footer)

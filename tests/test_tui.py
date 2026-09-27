@@ -240,6 +240,59 @@ def test_create_wizard():
     return errors
 
 
+def test_wizard_text_entry():
+    """Typing into the wizard must not trigger screen shortcuts.
+
+    'q' used to be the wizard's leave key, so typing a server id containing a
+    q (or h / l / b / S) popped dialogs or jumped steps instead of inserting
+    the letter. The field now wins every printable key.
+
+    The terminal emits a diff per keypress rather than a full frame, so the
+    assertion is the outcome: if the letters had been eaten as shortcuts,
+    pressing enter would confirm a leave-dialog and drop back to the dashboard
+    instead of advancing to step 2.
+    """
+    errors = []
+    proc, master, state = spawn("create")
+    out = pump(master, 2.0)
+
+    first = visible(out)
+    if "[" not in first or "]" not in first:
+        errors.append("text field has no visible affordance (no brackets)")
+    if "esc leave" not in first:
+        errors.append("the footer does not say what the keys do while editing")
+
+    os.write(master, b"aqua-quest")     # q, u and - must all type, not navigate
+    pump(master, 0.6, out)
+    if read_state(state).get("step") != 1:
+        errors.append(f"typing left step 1: {read_state(state)}")
+
+    os.write(master, b"\r")
+    if not wait_state(state, 10.0, step=2):
+        errors.append(f"enter did not advance past the name step - the typed id "
+                      f"was eaten by a shortcut: {read_state(state)}")
+
+    # the location step defaults to instances/<typed id>, proving the value
+    os.write(master, b"\r")
+    if not wait_state(state, 10.0, step=3):
+        errors.append(f"did not advance to the version step: {read_state(state)}")
+
+    os.write(master, b"\x1b")            # esc leaves the wizard at once
+    pump(master, 0.8, out)
+    if not wait_state(state, 6.0, screen="dashboard"):
+        errors.append(f"esc did not leave the wizard: {read_state(state)}")
+
+    finish(proc, master, out, state, errors, "wizard-text-entry")
+    stray = pathlib.Path(os.environ["MCTUI_ROOT"]) / "instances" / "aqua-quest"
+    if stray.exists():
+        shutil.rmtree(stray, ignore_errors=True)
+    if not errors:
+        print("ok wizard text entry ('q' types, enter advances, esc leaves)")
+    for err in errors:
+        print("   " + err.replace("\n", "\n   "))
+    return errors
+
+
 def main():
     only = sys.argv[1:] or list(SCREENS)
     all_errors = []
@@ -254,6 +307,7 @@ def main():
             print(f"ok {name} ({size} bytes)")
     if "create" in only and not os.environ.get("MCTUI_SKIP_WIZARD"):
         all_errors.extend(test_create_wizard())
+        all_errors.extend(test_wizard_text_entry())
     if all_errors:
         print(f"FAILED ({len(all_errors)} problems)")
         return 1

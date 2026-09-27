@@ -34,6 +34,7 @@ caller sets MCTUI_WEB_ALLOW_PUBLIC=1, and even then a warning is printed.
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -305,10 +306,18 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "status": result.get("account_status") or "unknown",
                 "login_link": result.get("login_link"),
             }
-        # the claim link is the login_link the agent reports over IPC when it
-        # has no secret yet; on a first run the daemon only prints it to its
-        # verbose log, so fall back to the last one it logged.
-        claim_url = (result.get("login_link") or _claim_url_from_log())
+        # The claim link: the agent reports one over IPC when it has one,
+        # otherwise the bundled playit CLI can mint one offline (playitd 1.0.10
+        # never prints it). The log scrape is a last resort for builds that do
+        # print it - it is kept because it costs nothing, but it is not the
+        # primary path, and when the agent is already claimed there is no link
+        # to show at all, by design.
+        claim_url = (result.get("login_link") or _claim_link_from_cli()
+                     or _claim_url_from_log())
+        if result.get("has_secret"):
+            # a cached link belongs to the pre-claim state; drop it the moment
+            # the agent is claimed so it can never be shown again
+            _CLAIM_CACHE.update(url="", at=0.0)
         return {
             "tunnels": playit_ipc.tunnel_rows(result),
             "account": account,
@@ -811,6 +820,44 @@ def _claim_url_from_log() -> str:
 
 
 _CLAIM_RE = re.compile(r"https://playit\.gg/claim/[A-Za-z0-9]+")
+
+
+def _claim_link_from_cli() -> str:
+    """Ask the bundled playit CLI for a claim URL.
+
+    playitd 1.0.10 does NOT print a claim URL on a first run: it logs "Waiting
+    for frontend secret provisioning over IPC" and idles. The link comes from
+    the CLI instead - `playit claim generate` makes a random code and
+    `playit claim url <code>` turns it into a link. Both are offline, so this
+    works on a machine with no network yet, which is exactly when the guided
+    setup needs it. The code is cached: it is random per call and the browser
+    UI polls every couple of seconds.
+    """
+    now = time.time()
+    cache = _CLAIM_CACHE
+    if cache["url"] and now - cache["at"] < 60:
+        return cache["url"]
+    exe = paths.bin_dir() / "playit"
+    if not os.access(exe, os.X_OK):
+        return ""
+    socket = paths.playit_socket()
+    ipc = ["--socket-path", str(socket)] if socket.exists() else []
+    try:
+        code = subprocess.run([str(exe)] + ipc + ["claim", "generate"],
+                              capture_output=True, text=True, timeout=8).stdout.strip()
+        if not re.fullmatch(r"[A-Za-z0-9]{6,}", code):
+            return ""
+        url = subprocess.run([str(exe)] + ipc + ["claim", "url", code],
+                             capture_output=True, text=True, timeout=8).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if not _CLAIM_RE.fullmatch(url):
+        return ""
+    _CLAIM_CACHE.update(url=url, at=now)
+    return url
+
+
+_CLAIM_CACHE = {"url": "", "at": 0.0}
 
 
 def _param(query: str, key: str) -> str:

@@ -74,7 +74,7 @@ class GameplayStep(Step):
                 self._sync(wiz)
             elif key == 27:
                 self.edit = None
-            return None
+            return action
         action = self.widget.handle_key(key, height=10)
         if action == "select":
             key_name, _desc, kind = self.ROWS[self.widget.index]
@@ -170,7 +170,7 @@ class NetworkStep(Step):
                 self._sync(wiz)
             elif key == 27:
                 self.edit = None
-            return None
+            return action
         action = self.widget.handle_key(key, height=6)
         if action == "select":
             key_name, _desc, kind = self.ROWS[self.widget.index]

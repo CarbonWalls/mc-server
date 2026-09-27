@@ -34,16 +34,43 @@ class dashboard(Screen):
         now = time.time()
         if now - self.java_at > 30:
             self.java_at = now
-            self.java_line = procs.java_version(self.ctx.settings.get("java", ""))
+            # `java -version` is a subprocess with a 15s timeout: a cold JVM on a
+            # slow host takes seconds, and running it on the main loop freezes
+            # the keys for that long
+            self._refresh_java()
         if now - self.tunnel_at > 8:
             self.tunnel_at = now
-            try:
-                result = playit_ipc.query(timeout=3.0)
+            # playit IPC is a blocking socket call with a 3s timeout. Run it in
+            # a worker: a hung agent used to freeze the whole UI for up to 3s
+            # every 8s (keys queue up and arrive in a burst).
+            self._refresh_tunnels()
+
+    def _refresh_java(self):
+        self.java_line = ""
+        override = self.ctx.settings.get("java", "")
+
+        def job_fn(job):
+            return procs.java_version(override)
+
+        def done(job):
+            self.java_line = str(job.result) if job.ok else ""
+
+        self.ctx.run_job("java version", job_fn, on_done=done, silent=True)
+
+    def _refresh_tunnels(self):
+        def job_fn(job):
+            return playit_ipc.query(timeout=3.0)
+
+        def done(job):
+            result = job.result if isinstance(job.result, dict) else {}
+            if job.ok and result:
                 self.tunnel_rows = playit_ipc.tunnel_rows(result)
                 self.tunnel_error = ""
-            except Exception as exc:
+            else:
                 self.tunnel_rows = []
-                self.tunnel_error = str(exc)
+                self.tunnel_error = str(job.error)
+
+        self.ctx.run_job("tunnel status", job_fn, on_done=done, silent=True)
 
     def _state_line(self, status: dict) -> str:
         state = status.get("state", "unknown")

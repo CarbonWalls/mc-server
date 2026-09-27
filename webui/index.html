@@ -55,6 +55,12 @@
     Without the flag the UI talks to the real API and degrades to an offline
     banner when the backend is unreachable.
 
+  LAYOUT
+    Built for 360px up. The Servers table stacks into per-server blocks below
+    640px and drops its secondary columns below 900px; every other table drops
+    one or two low-priority columns on narrow screens (see styles.css). Nothing
+    scrolls horizontally except the wizard's step bar.
+
   No external requests. No build step. No frameworks. Vanilla DOM only.
   ============================================================================
 -->

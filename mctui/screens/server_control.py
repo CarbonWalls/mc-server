@@ -36,9 +36,22 @@ class server_control(Screen):
             self.heap_at = now
             status = self.ctx.status_data()["server"]
             if status.get("state") == "running" and status.get("pid"):
-                self.heap = procs.heap_info(status["pid"])
+                # jcmd is a subprocess with a 12s timeout: never run it on the
+                # main loop, or a busy JVM freezes the UI every 15s
+                self._refresh_heap(status["pid"])
             else:
                 self.heap = ""
+
+    def _refresh_heap(self, pid: int) -> None:
+        self.heap = "(querying...)"
+
+        def job_fn(job):
+            return procs.heap_info(pid)
+
+        def done(job):
+            self.heap = str(job.result) if job.ok else ""
+
+        self.ctx.run_job("heap info", job_fn, on_done=done, silent=True)
 
     def render(self, win):
         height, width = self.size(win)

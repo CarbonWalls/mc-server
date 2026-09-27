@@ -9,6 +9,7 @@ through the relay. The server binds to port 0 (any free port) and the accept
 loop runs in a background thread of the test process.
 """
 import json
+import shutil
 import socket
 import sys
 import threading
@@ -391,7 +392,7 @@ def main():
     try:
         for fn in (test_ui_and_gets, test_player_lists, test_server_and_console,
                    test_settings, test_instance_lifecycle, test_servers_and_connect,
-                   test_backups, test_sse):
+                   test_claim_link, test_backups, test_sse):
             print(f"-- {fn.__name__}")
             try:
                 fn()
@@ -410,6 +411,70 @@ def main():
         return 1
     print("PASS web")
     return 0
+
+
+def test_claim_link():
+    """The claim link the Connect screen shows, against the real binaries.
+
+    playitd 1.0.10 never prints a claim URL: it waits for a secret to be
+    provisioned over IPC. The link has to come from the bundled `playit` CLI
+    (claim generate + claim url), which is offline. Skipped when the binaries
+    are absent, so the suite still runs on a tree without them.
+    """
+    playit = paths.bin_dir() / "playit"
+    # seed() writes an exit-0 stub in place of the real agent binaries; put the
+    # real CLI there so this is exercised wherever playit is installed,
+    # otherwise it is skipped
+    real = mctui_test_env.PROJECT / "bin" / "playit"
+    if not real.is_file():
+        print("   (skipped: bin/playit not present)")
+        return
+    paths.bin_dir().mkdir(parents=True, exist_ok=True)
+    shutil.copy(real, playit)
+
+    # the claim code is what the CLI generates, and the URL is deterministic
+    # from it, so the two have to agree
+    link = web._claim_link_from_cli()
+    check("the CLI produced a claim url", bool(link), link)
+    if not link:
+        return
+    code = link.rsplit("/claim/", 1)[1]
+    import subprocess
+    import re
+    check("the claim url matches playit's format",
+          bool(re.fullmatch(r"https://playit\.gg/claim/[A-Za-z0-9]{6,}", link)), link)
+    again = web._claim_link_from_cli()
+    check("the link is cached between polls (the code is random per call)",
+          again == link, f"{link} vs {again}")
+
+    # and the same URL the CLI would print for that code
+    try:
+        printed = subprocess.run([str(playit), "claim", "url", code],
+                                 capture_output=True, text=True,
+                                 timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        check("playit claim url ran", False, str(exc))
+        return
+    check("the url matches `playit claim url <code>`", printed == link,
+          f"{printed!r} vs {link!r}")
+
+    # the log scrape is the fallback: it must find a URL a daemon actually
+    # printed, and stay quiet when there is nothing to find
+    log = paths.log_paths("main")["playitd_verbose_log"]
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        "2026-01-01T00:00:00Z INFO playitd::daemon: Starting playitd\n"
+        "2026-01-01T00:00:00Z INFO playitd::daemon: Waiting for frontend "
+        "secret provisioning over IPC\n"
+        "2026-01-01T00:00:01Z INFO https://playit.gg/claim/legacycode123\n"
+        "2026-01-01T00:00:02Z INFO tunnel up\n",
+        encoding="utf-8")
+    check("the log scrape finds the last claim url a daemon printed",
+          web._claim_url_from_log() == "https://playit.gg/claim/legacycode123",
+          web._claim_url_from_log())
+    log.unlink()
+    check("the log scrape is quiet when there is no log",
+          web._claim_url_from_log() == "", web._claim_url_from_log())
 
 
 if __name__ == "__main__":
