@@ -7,7 +7,7 @@ from ..ui.wizard import Step
 class NameStep(Step):
     key = "name"
     title = "instance id"
-    hint = "letters, digits, - or _ (max 32). this becomes instances/<id>"
+    hint = "letters, digits, - or _ (max 32). this becomes the folder name"
     handles_enter = True
 
     def on_enter(self, wiz):
@@ -37,6 +37,46 @@ class NameStep(Step):
     widget = None
 
 
+class LocationStep(Step):
+    """Where the server folder lives. Defaults to instances/<id>; any writable
+    folder is accepted, inside or outside the project tree."""
+    key = "location"
+    title = "location"
+    hint = "where the server folder goes. enter edits; blank = instances/<id>"
+    handles_enter = True
+    widget = None
+
+    def on_enter(self, wiz):
+        default = str(wiz.data.get("location", "")) or \
+            f"instances/{wiz.data.get('name', '')}"
+        name = str(wiz.data.get("name", ""))
+        self.widget = w.TextEdit(default, label="folder",
+                                 validator=lambda v: instances.validate_path(v, name))
+
+    def render(self, wiz, win, y, x, h, width, theme):
+        self.widget.render(win, y, x, width, theme)
+        lines = [
+            "relative paths are inside this project, absolute paths anywhere,",
+            "e.g. /mnt/games/minecraft. the folder is created if missing.",
+        ]
+        for i, line in enumerate(lines):
+            th.safe_addstr(win, y + 3 + i, x, th.trunc(line, width), theme.dim)
+
+    def handle_key(self, wiz, key):
+        if self.widget.handle_key(key) == "submit":
+            wiz.data["location"] = self.widget.value.strip()
+            return "next"
+        return None
+
+    def validate(self, wiz):
+        return instances.validate_path(str(wiz.data.get("location", "")),
+                                       str(wiz.data.get("name", "")))
+
+    def summary(self, wiz):
+        return [("location", wiz.data.get("location", "")
+                 or f"instances/{wiz.data.get('name', '')}")]
+
+
 class VersionStep(Step):
     key = "paper"
     title = "paper version"
@@ -53,8 +93,8 @@ class VersionStep(Step):
         wiz.set_info("fetching paper versions...")
 
         def job_fn(job):
-            job.update(0.2, "querying papermc")
-            return version.paper_versions(limit=25)
+            job.update(0.05, "querying papermc")
+            return version.paper_versions(limit=25, job=job)
 
         def done(job):
             result = job.result or []
@@ -130,8 +170,8 @@ class BuildStep(Step):
         wiz.set_info(f"fetching builds for {key}...")
 
         def job_fn(job):
-            job.update(0.2, f"querying builds for {key}")
-            return version.paper_builds(key, limit=15)
+            job.update(0.05, f"querying builds for {key}")
+            return version.paper_builds(key, limit=15, job=job)
 
         def done(job):
             result = job.result or []

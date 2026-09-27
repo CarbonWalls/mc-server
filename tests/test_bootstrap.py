@@ -8,17 +8,22 @@ import shutil
 import sys
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import bootstrap, config, paths
+from mctui.core import bootstrap, config, paths  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_bootstrap"
+TMP = ROOT / "tmp_bootstrap"
 
 
 def setup():
     if TMP.exists():
         shutil.rmtree(TMP)
     TMP.mkdir(parents=True)
+    mctui_test_env.seed(ROOT)
 
 
 def _pick(paper_version, listing):
@@ -85,14 +90,10 @@ def test_inventory_is_read_only():
 
 
 def test_geyser_config_contract():
-    dest = TMP / "config.yml"
-    (TMP / "Geyser-Spigot").mkdir(parents=True, exist_ok=True)
-    dest = TMP / "Geyser-Spigot" / "config.yml"
+    # MCTUI_ROOT isolates this, so write_geyser_config now lands in the
+    # throwaway tree and can be asserted on directly (it used to mutate the
+    # live checkout and "restored" it with a generated file instead)
     res = bootstrap.write_geyser_config({})
-    # writes into the real server tree; assert the contract on a scratch copy
-    shutil.copy2(paths.server_dir() / "plugins" / "Geyser-Spigot" / "config.yml", dest) \
-        if (paths.server_dir() / "plugins" / "Geyser-Spigot" / "config.yml").is_file() \
-        else None
     assert res["ok"], res.get("error")
     written = paths.server_dir() / "plugins" / "Geyser-Spigot" / "config.yml"
     assert config.yaml_get_file(written, ["bedrock", "port"]) == "19132"
@@ -101,6 +102,10 @@ def test_geyser_config_contract():
                                           "use-haproxy-protocol"]) == "true"
     assert config.yaml_get_file(written, ["advanced", "bedrock",
                                           "broadcast-port"]) == "19132"
+    # exactly one top-level "advanced:" key - the duplicate-root-key bug
+    roots = [ln for ln in config.read_text(written).splitlines()
+             if ln.strip() and not ln.startswith(" ") and ln.rstrip().endswith(":")]
+    assert sum(1 for r in roots if r.strip() == "advanced:") == 1, roots
     # a custom port must land in both the listener and the broadcast value
     res = bootstrap.write_geyser_config({"port": 19199, "broadcast_port": 12345})
     assert res["ok"]
@@ -110,8 +115,6 @@ def test_geyser_config_contract():
     # out-of-range ports are rejected
     bad = bootstrap.write_geyser_config({"port": 99999})
     assert not bad["ok"]
-    # restore the live contract so the doctor still passes afterwards
-    bootstrap.write_geyser_config({})
     print("ok geyser config contract")
 
 
@@ -130,7 +133,10 @@ def test_doctor_reports_live_state():
 
 if __name__ == "__main__":
     setup()
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            fn()
-    print("\nbootstrap tests: all passed")
+    try:
+        for name, fn in sorted(list(globals().items())):
+            if name.startswith("test_") and callable(fn):
+                fn()
+        print("\nbootstrap tests: all passed")
+    finally:
+        mctui_test_env.discard(ROOT)

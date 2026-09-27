@@ -164,12 +164,30 @@ def yaml_set(text: str, yaml_path: list, value: str) -> tuple:
             found = True
             break
     if not found:
-        for i, part in enumerate(target):
-            pad = "  " * i
-            if i == len(target) - 1:
-                lines.append(f"{pad}{part}: {value}")
-            else:
-                lines.append(f"{pad}{part}:")
+        # Insert under the deepest existing ancestor instead of appending a
+        # fresh nested block at EOF - appending would produce a second
+        # top-level "advanced:" key and silently split the config in two.
+        ancestor_idx = -1
+        ancestor_depth = 0
+        for idx, _raw, keys, _rest in _yaml_blocks(lines):
+            if len(keys) <= len(target) and keys == target[: len(keys)]:
+                if len(keys) > ancestor_depth:
+                    ancestor_depth = len(keys)
+                    ancestor_idx = idx
+        if ancestor_idx >= 0:
+            at = ancestor_idx + 1
+            for depth in range(ancestor_depth, len(target)):
+                lines.insert(at, f"{'  ' * depth}{target[depth]}: {value}"
+                             if depth == len(target) - 1
+                             else f"{'  ' * depth}{target[depth]}:")
+                at += 1
+        else:
+            for i, part in enumerate(target):
+                pad = "  " * i
+                if i == len(target) - 1:
+                    lines.append(f"{pad}{part}: {value}")
+                else:
+                    lines.append(f"{pad}{part}:")
     joined = "\n".join(lines)
     if text.endswith("\n"):
         joined += "\n"

@@ -18,37 +18,33 @@ def parse_args(argv):
                              "players, logs, backup, diag, config, settings")
     parser.add_argument("--version", action="store_true", help="print version and exit")
     parser.add_argument("--check", action="store_true",
-                        help="import every module and exit (no curses needed)")
+                        help="report whether this tree can host a server, and exit")
     parser.add_argument("--doctor", action="store_true",
                         help="check this machine for a from-zero bootstrap (no curses)")
     parser.add_argument("--bootstrap", action="store_true",
                         help="install everything this project needs, from zero")
     parser.add_argument("--paper-version", default="",
                         help="paper line to bootstrap (default: newest stable)")
+    parser.add_argument("--yes", action="store_true",
+                        help="accept the Mojang EULA without prompting")
+    parser.add_argument("--web", action="store_true",
+                        help="serve the browser UI and API instead of the TUI")
+    parser.add_argument("--web-host", default=os.environ.get("MCTUI_WEB_HOST", "127.0.0.1"),
+                        help="address to bind the web UI to (default 127.0.0.1)")
+    parser.add_argument("--web-port", type=int,
+                        default=int(os.environ.get("MCTUI_WEB_PORT", "8080")),
+                        help="port to bind the web UI to (default 8080)")
     return parser.parse_args(argv)
 
 
 def self_check() -> int:
-    import mctui.app
-    import mctui.core.backup
-    import mctui.core.bootstrap
-    import mctui.core.config
-    import mctui.core.download
-    import mctui.core.instances
-    import mctui.core.jobs
-    import mctui.core.logs
-    import mctui.core.paths
-    import mctui.core.players
-    import mctui.core.playit_ipc
-    import mctui.core.probes
-    import mctui.core.procs
-    import mctui.core.version
-    import mctui.screens
-    import mctui.ui.theme
-    import mctui.ui.widgets
-    import mctui.ui.wizard
-    print("ok: all modules import")
-    return 0
+    """Honest readiness report: exit 0 only if this tree can host a server.
+
+    Never claims success just because the modules import; an empty checkout
+    imports fine but cannot run anything.
+    """
+    from mctui.core import check
+    return check.run()
 
 
 _LABEL = {"ok": "ok  ", "warn": "WARN", "err": "FAIL", "todo": "todo"}
@@ -71,7 +67,8 @@ def run_doctor() -> int:
 
 
 def run_bootstrap(args) -> int:
-    from mctui.core import bootstrap
+    from mctui.core import bootstrap, paths
+
     if not bootstrap.host_arch():
         print(f"bootstrap: unsupported architecture {bootstrap._machine()!r}; "
               f"supported: x86_64, aarch64/arm64, armv7l", file=sys.stderr)
@@ -80,6 +77,31 @@ def run_bootstrap(args) -> int:
         mark = "will install" if step["needed"] else "already present"
         print(f"  {step['label']:<22} {mark}")
     print()
+    # the Mojang EULA gates the server: never accept it on the user's behalf
+    spec = {"paper_version": args.paper_version}
+    if not paths.server_dir().joinpath("eula.txt").is_file():
+        print("Minecraft is not free software. Before the server can start you")
+        print("must accept the Mojang EULA: https://aka.ms/MinecraftEULA")
+        print()
+        if os.environ.get("MCTUI_YES"):
+            print("accepted via MCTUI_YES (non-interactive)", file=sys.stderr)
+            consent = True
+        elif args.yes:
+            consent = True
+        elif sys.stdin.isatty():
+            answer = input("Accept the EULA? [y/N] ").strip().lower()
+            consent = answer in ("y", "yes")
+        else:
+            print("not a terminal and MCTUI_YES unset - skipping the EULA; "
+                  "the download will finish but the server will not start",
+                  file=sys.stderr)
+            consent = False
+        if not consent:
+            print("EULA declined; nothing written to server/eula.txt.",
+                  file=sys.stderr)
+        else:
+            spec["eula_consent"] = True
+        print()
     print("downloading into this folder only (no root, no system installs) ...")
 
     class Job:
@@ -88,7 +110,7 @@ def run_bootstrap(args) -> int:
                 pct = int((progress or 0) * 100)
                 print(f"  [{pct:3d}%] {message}")
 
-    result = bootstrap.bootstrap(Job(), {"paper_version": args.paper_version})
+    result = bootstrap.bootstrap(Job(), spec)
     print()
     for step in result.get("steps", []):
         if step.get("ok"):
@@ -106,6 +128,35 @@ def run_bootstrap(args) -> int:
     return 1
 
 
+def run_web(args) -> int:
+    """Serve the browser UI and its JSON API (does not touch running servers)."""
+    from mctui import web
+    from mctui.core import paths
+    try:
+        server = web.serve(args.web_host, args.web_port)
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"web: cannot bind {args.web_host}:{args.web_port}: {exc}",
+              file=sys.stderr)
+        return 1
+    ui = paths.relative(web.WEBUI_FILE) if web.WEBUI_FILE.exists() else "webui/index.html"
+    # report the port actually bound: --web-port 0 lets the OS choose one
+    real_host, real_port = server.server_address[:2]
+    print(f"mc_tui web UI: http://{real_host}:{real_port}", flush=True)
+    print(f"  serving {ui}", flush=True)
+    print("  ctrl-c to stop (running servers are not affected)", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.5)
+    except KeyboardInterrupt:
+        print("\nstopping the web UI (your server keeps running)")
+    finally:
+        server.shutdown()
+        server.server_close()
+    return 0
+
+
 def main(argv=None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if args.version:
@@ -117,6 +168,8 @@ def main(argv=None) -> int:
         return run_doctor()
     if args.bootstrap:
         return run_bootstrap(args)
+    if args.web:
+        return run_web(args)
     from mctui.app import App, SCREENS
     if args.screen not in SCREENS:
         print(f"unknown screen {args.screen!r}; choose from: "

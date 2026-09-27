@@ -24,7 +24,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from . import config, download, paths, version
+from . import config, download, instances, paths, version
 
 # --- the port contract (appendix A section 3) ------------------------------
 JAVA_PORT = 25565
@@ -341,15 +341,23 @@ def _download_tunnels(job) -> dict:
             if url.endswith(".tar.gz"):
                 archive = paths.cache_dir() / "bore.tar.gz"
                 download.download(url, archive, timeout=600)
+                # extract into a staging dir, then move the binary into place:
+                # a killed extraction must never leave a half-written bore-bin
+                # that the next run mistakes for a finished install
+                staging = paths.cache_dir() / "bore.extract"
+                shutil.rmtree(staging, ignore_errors=True)
+                staging.mkdir(parents=True, exist_ok=True)
                 with tarfile.open(archive, "r:gz") as tar:
                     for member in tar.getmembers():
                         parts = Path(member.name).parts
                         if member.name.startswith("/") or ".." in parts or not parts:
                             continue
-                        tar.extract(member, path=paths.bin_dir(), filter="data")
-                shipped = paths.bin_dir() / "bore"
-                if shipped.is_file():
-                    shutil.move(str(shipped), str(dest))
+                        tar.extract(member, path=staging, filter="data")
+                shipped = next((p for p in staging.rglob("bore") if p.is_file()), None)
+                if shipped is None:
+                    raise OSError("bore binary not found inside the release archive")
+                shutil.move(str(shipped), str(dest))
+                shutil.rmtree(staging, ignore_errors=True)
             else:
                 download.download(url, dest, timeout=600)
             try:
@@ -483,8 +491,16 @@ def bootstrap(job, spec: dict | None = None) -> dict:
     if not inv["jdk"] and not run(0.30, f"Temurin JDK {JDK_MAJOR}",
                                   lambda: version.install_jdk(job, JDK_MAJOR)):
         return result
-    if not version.set_active_jdk(_newest_jdk()):
-        result["todo"].append("could not link jdk/current - point settings.java at it")
+    # Link jdk/current at the newest installed JDK - but never clobber a
+    # working link. _newest_jdk() returns "" when only the symlink exists,
+    # and symlink_to("") would point jdk/current at itself, breaking the JVM.
+    newest = _newest_jdk()
+    if newest and not paths.java_bin().is_file():
+        if not version.set_active_jdk(newest):
+            result["todo"].append("could not link jdk/current - point settings.java at it")
+    elif not paths.java_bin().is_file():
+        result["todo"].append("no usable jdk/current - install a JDK or point "
+                              "settings.java at a java binary")
 
     if not inv["paper_jar"] and not run(0.65, "Paper server jar",
                                         lambda: _download_paper(job, spec.get("paper_version", ""))):
@@ -494,8 +510,20 @@ def bootstrap(job, spec: dict | None = None) -> dict:
         result["todo"].append("tunnel client download failed - bore/playit optional, "
                               "the server still starts LAN-only")
 
-    if not inv["eula"] and not run(0.84, "Mojang EULA", _accept_eula):
-        return result
+    if not inv["eula"]:
+        # the EULA is only written with explicit consent (Phase 3). It is
+        # deliberately non-fatal: downloads and configs still finish, only
+        # the server cannot start until the user accepts.
+        consent = bool(spec.get("eula_consent"))
+        job.update(0.84, "Mojang EULA")
+        out = _accept_eula(consent)
+        out["step"] = "Mojang EULA"
+        result["steps"].append(out)
+        if not out.get("ok"):
+            result["todo"].append(
+                "Mojang EULA not accepted - the server cannot start until you do. "
+                "Re-run --bootstrap and accept the prompt, or put eula=true in "
+                "server/eula.txt after reading https://aka.ms/MinecraftEULA")
     if not inv["properties"] and not run(0.88, "server.properties", _write_default_properties):
         return result
 
@@ -511,12 +539,28 @@ def bootstrap(job, spec: dict | None = None) -> dict:
         result["error"] = f"Geyser + Floodgate: {plugins.get('error')}"
 
     if result["ok"]:
+        # the built-in instance self-identifies too, so a rescan finds it
+        ensure = instances.ensure_main_marker()
+        if not ensure.get("ok"):
+            result["todo"].append(f"could not write the instance marker: "
+                                  f"{ensure.get('error')}")
+        else:
+            instances.register_main()
         job.update(1.0, "bootstrap complete")
         result["todo"].append("start it with ./start.sh (or TUNNEL=playit for Bedrock)")
     return result
 
 
-def _accept_eula() -> dict:
+def _accept_eula(consent: bool = False) -> dict:
+    """Write eula.txt only when the user has explicitly accepted the EULA.
+
+    Passing ``consent=False`` (or omitting it) reports the missing acceptance
+    without writing anything - nobody silently opts in.
+    """
+    if not consent:
+        return {"ok": False, "error": "EULA not accepted",
+                "needs_consent": True,
+                "link": "https://aka.ms/MinecraftEULA"}
     try:
         paths.server_dir().mkdir(parents=True, exist_ok=True)
         (paths.server_dir() / "eula.txt").write_text(

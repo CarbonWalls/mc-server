@@ -13,11 +13,15 @@ import sys
 import threading
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import download
+from mctui.core import download  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_download"
+TMP = ROOT / "tmp_download"
 BODY = bytes((i * 37 + 11) & 0xFF for i in range(1024 * 1024))   # 1 MiB, deterministic
 SHA256 = hashlib.sha256(BODY).hexdigest()
 
@@ -215,6 +219,7 @@ def main():
         print("PASS download")
     finally:
         teardown()
+        mctui_test_env.discard(ROOT)
 
 
 if __name__ == "__main__":

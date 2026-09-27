@@ -1,10 +1,11 @@
 import os
+import shutil
 import signal
 import subprocess
 import time
 from pathlib import Path
 
-from . import paths
+from . import config, console, paths
 
 AIKAR_FLAGS = [
     "-XX:+UseG1GC",
@@ -226,6 +227,40 @@ def _resolve_jdk(java_override: str = "") -> Path:
     return Path("java")
 
 
+def _java_runnable(exe) -> bool:
+    """Would this java binary actually launch? An absolute path must be an
+    executable file; a bare name must resolve on PATH."""
+    try:
+        p = Path(exe)
+        if p.is_absolute():
+            return p.is_file() and os.access(p, os.X_OK)
+        return bool(shutil.which(str(p)))
+    except (OSError, ValueError):
+        return False
+
+
+def _sync_server_port(instance_dir, env: dict | None) -> None:
+    """Keep server.properties and the tunnel talking about the same port.
+
+    Paper reads ``server-port`` from server.properties at startup; the bore /
+    playit tunnel reads ``SERVER_PORT`` from the environment (see
+    paths.env_overrides). If the setting changed and only the env was updated,
+    the tunnel would forward to a port nothing listens on - so the properties
+    file is rewritten to match before java is launched.
+    """
+    port = (env or {}).get("SERVER_PORT")
+    if not port:
+        return
+    props_path = Path(instance_dir) / "server.properties"
+    try:
+        props = config.read_properties(props_path)
+        if str(props.get("server-port", "")) != str(port):
+            props["server-port"] = str(port)
+            config.write_properties(props_path, props)
+    except OSError:
+        pass
+
+
 def java_version(java_override: str = "") -> str:
     exe = _resolve_jdk(java_override)
     try:
@@ -281,10 +316,18 @@ def start_server(instance_id: str, jar_name: str = "paper.jar", xms: str = "512M
     instance_dir = paths.instance_path(instance_id)
     if not (Path(instance_dir) / jar_name).exists():
         return {"ok": False, "error": f"missing {jar_name} in {instance_dir}"}
-    if not paths.java_bin().exists():
-        return {"ok": False, "error": f"bundled JDK missing at {paths.java_bin()}"}
+    # Defect C: the bundled JDK is preferred but not mandatory - a usable java
+    # on PATH is fine. Checking paths.java_bin() here used to reject that
+    # fallback before build_server_command() could reach it (dead code path).
+    exe = _resolve_jdk()
+    if not _java_runnable(exe):
+        return {"ok": False,
+                "error": f"no usable java: bundled JDK missing at "
+                         f"{paths.java_bin()} and no 'java' on PATH - run "
+                         f"python3 mc_tui.py --bootstrap (or ./setup.sh)"}
     if not ensure_eula(instance_dir):
         return {"ok": False, "error": "could not write eula.txt"}
+    _sync_server_port(instance_dir, env)
     lp = paths.log_paths(instance_id)
     existing = read_pid(lp["server_pid"])
     if classify(existing, jar_name) == "running":
@@ -296,10 +339,15 @@ def start_server(instance_id: str, jar_name: str = "paper.jar", xms: str = "512M
     except OSError as exc:
         return {"ok": False, "error": f"cannot open log {lp['server_log']}: {exc}"}
     try:
+        # Phase 6: stdin is a pipe, not DEVNULL, so the console screen can send
+        # commands. The write end is moved into a detached relay (see
+        # mctui.core.console) so it stays open for the server's whole life even
+        # after this TUI process exits - exiting the TUI never stops a running
+        # server, and this is what keeps its console alive after we are gone.
         proc = subprocess.Popen(
             cmd,
             cwd=str(instance_dir),
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -313,9 +361,19 @@ def start_server(instance_id: str, jar_name: str = "paper.jar", xms: str = "512M
             handle.close()
         except OSError:
             pass
+    relay = console.spawn_relay(proc, instance_id)
+    try:
+        proc.stdin.close()
+    except OSError:
+        pass
     _CHILDREN[proc.pid] = proc
     lp["server_pid"].write_text(f"{proc.pid}\n")
-    return {"ok": True, "pid": proc.pid, "log": str(lp["server_log"]), "cmd": cmd}
+    out = {"ok": True, "pid": proc.pid, "log": str(lp["server_log"]), "cmd": cmd}
+    if relay.get("ok"):
+        out["console"] = relay["socket"]
+    else:
+        out["console_error"] = relay.get("error", "")
+    return out
 
 
 def stop_server(instance_id: str, timeout: float = 60.0, on_progress=None) -> dict:
@@ -347,6 +405,10 @@ def stop_server(instance_id: str, timeout: float = 60.0, on_progress=None) -> di
     except ProcessLookupError:
         pass
     time.sleep(0.5)
+    # reap the child we launched so it does not linger as a zombie (the
+    # console relay treats a zombie as gone, but reaping keeps the pid file
+    # and the process table honest)
+    _reap(pid)
     _unlink(lp["server_pid"])
     return {"ok": True, "message": f"force-killed PID {pid} after {int(timeout)}s"}
 
@@ -508,4 +570,15 @@ def _unlink(path) -> None:
     try:
         Path(path).unlink()
     except OSError:
+        pass
+
+
+def _reap(pid: int) -> None:
+    """Reap a child we launched so it exits the process table."""
+    proc = _CHILDREN.pop(pid, None)
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
         pass

@@ -6,7 +6,7 @@ from ..ui import widgets as w
 from ..ui.panels import ProgressBar, draw_wrapped, spinner_char
 from ..ui.wizard import Wizard
 from ._base import Screen
-from .create_steps import BuildStep, NameStep, PerfStep, VersionStep
+from .create_steps import BuildStep, LocationStep, NameStep, PerfStep, VersionStep
 from .create_steps_config import (GameplayStep, NetworkStep, PluginsStep,
                                  ReviewStep)
 
@@ -19,8 +19,8 @@ class create_server(Screen):
         self.job = None
         self.confirm = None
         self.wiz = Wizard(
-            [NameStep(), VersionStep(), BuildStep(), PerfStep(), GameplayStep(),
-             NetworkStep(), PluginsStep(), ReviewStep()],
+            [NameStep(), LocationStep(), VersionStep(), BuildStep(), PerfStep(),
+             GameplayStep(), NetworkStep(), PluginsStep(), ReviewStep()],
             data={}, title="create server", ctx=self.ctx)
 
     # --- build -------------------------------------------------------
@@ -42,6 +42,7 @@ class create_server(Screen):
         return {
             "id": str(data.get("name", "")),
             "name": str(data.get("display") or data.get("name", "")),
+            "path": str(data.get("location") or ""),
             "paper": paper,
             "properties": props,
             "server_port": server_port,
@@ -52,8 +53,9 @@ class create_server(Screen):
                      "xmx": data.get("xmx", "768M")},
             "geyser": {"install": bedrock_on,
                        "port": int(net.get("bedrock-port", 19132) or 19132),
-                       "broadcast_port": int(net.get("bedrock-port", 19132) or 19132),
-                       "auth_type": "offline", "transport": "raknet", "haproxy": True},
+                       "broadcast_port": 0,
+                       "auth_type": "floodgate", "transport": "raknet",
+                       "haproxy": True, "floodgate": bedrock_on},
             "plugins": list(data.get("plugins") or []),
             "plugin_specs": list(data.get("specs") or []),
             "note": "",

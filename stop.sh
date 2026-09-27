@@ -8,14 +8,16 @@ LOG_DIR="$SCRIPT_DIR/logs"
 stopped_any=0
 
 # --- Stop the tunnel first -------------------------------------------------
-if [ -f "$LOG_DIR/playit.pid" ]; then
-  PID="$(cat "$LOG_DIR/playit.pid" 2>/dev/null || true)"
+# start.sh writes the tunnel attach pid to tunnel.pid. (An older release wrote
+# playit.pid, which nothing ever produced - that branch was dead.)
+if [ -f "$LOG_DIR/tunnel.pid" ]; then
+  PID="$(cat "$LOG_DIR/tunnel.pid" 2>/dev/null || true)"
   if [ -n "${PID:-}" ] && kill -0 "$PID" 2>/dev/null; then
     echo "Stopping playit tunnel (PID $PID)..."
     kill "$PID" 2>/dev/null || true
     stopped_any=1
   fi
-  rm -f "$LOG_DIR/playit.pid"
+  rm -f "$LOG_DIR/tunnel.pid"
 fi
 
 # --- Gracefully stop the server via RCON-less shutdown ---------------------

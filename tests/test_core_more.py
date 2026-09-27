@@ -7,11 +7,15 @@ import sys
 import time
 from pathlib import Path
 
+import mctui_test_env
+
+ROOT = mctui_test_env.activate()
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mctui.core import backup, config, instances, logs, paths, players, procs
+from mctui.core import backup, config, instances, logs, paths, players, procs  # noqa: E402
 
-TMP = Path(__file__).resolve().parent / "tmp_core"
+TMP = ROOT / "tmp_core"
 FAKE_INSTANCE = "tuiunit"
 
 
@@ -19,6 +23,7 @@ def reset():
     if TMP.exists():
         shutil.rmtree(TMP)
     TMP.mkdir(parents=True)
+    mctui_test_env.seed(ROOT)
     for suffix in ("", "-clone", "-renamed"):
         inst = paths.instances_dir() / (FAKE_INSTANCE + suffix)
         if inst.exists():
@@ -176,6 +181,9 @@ def test_offline_uuid():
     expected = players.offline_uuid("Notch")
     assert len(expected) == 36 and expected.count("-") == 4
     java = paths.java_bin()
+    if not java.is_file():
+        print("ok offline uuid (skipped: no JVM on this machine)")
+        return
     src = TMP / "OfflineUuid.java"
     src.write_text(
         "import java.util.*;\n"
@@ -353,6 +361,52 @@ def test_paper_version_change_guard():
     print("ok paper change guards")
 
 
+def test_tunnel_port_sync():
+    """apply_tunnel_port writes the tunnel's public port into Geyser (Defect I)."""
+    instance_id = "porttest"
+    inst = paths.instances_dir() / instance_id
+    if inst.exists():
+        shutil.rmtree(inst)
+    inst.mkdir(parents=True)
+    (inst / "paper.jar").write_bytes(b"fakejar")
+
+    # no Geyser config: honest error, not a silent no-op
+    missing = instances.apply_tunnel_port(instance_id, 41000)
+    assert not missing["ok"], missing
+
+    geyser_dir = inst / "plugins" / "Geyser-Spigot"
+    geyser_dir.mkdir(parents=True)
+    geyser = geyser_dir / "config.yml"
+    geyser.write_text("advanced:\n  bedrock:\n    broadcast-port: 19132\n"
+                      "    clone-remote-port: true\n")
+
+    entry = {"id": instance_id, "name": "port test", "paper": "26.2"}
+    write = instances.write_marker(entry, inst)
+    assert write["ok"], write
+    instances.add_instance(instances._marker_to_entry(
+        instances.read_marker(inst), inst))
+
+    first = instances.apply_tunnel_port(instance_id, 41000)
+    assert first["ok"] and first["changed"], first
+    assert config.yaml_get_file(geyser, ["advanced", "bedrock", "broadcast-port"]) == "41000"
+    assert instances.get_instance(instance_id).get("bedrock_port") == 41000
+
+    # applying the same port again is a no-op
+    again = instances.apply_tunnel_port(instance_id, 41000)
+    assert again["ok"] and not again["changed"], again
+
+    # out-of-range ports are rejected
+    rejected = instances.apply_tunnel_port(instance_id, 99999)
+    assert not rejected["ok"], rejected
+
+    index = instances.load_index()
+    index["instances"] = [e for e in index["instances"]
+                          if e.get("id") != instance_id]
+    instances.save_index(index)
+    shutil.rmtree(inst, ignore_errors=True)
+    print("ok tunnel port sync")
+
+
 def cleanup():
     shutil.rmtree(TMP, ignore_errors=True)
     inst = paths.instances_dir() / FAKE_INSTANCE
@@ -389,8 +443,10 @@ def main():
         test_build_instance()
         test_clone_rename_delete()
         test_paper_version_change_guard()
+        test_tunnel_port_sync()
     finally:
         cleanup()
+        mctui_test_env.discard(ROOT)
     print("PASS core-more")
 
 
