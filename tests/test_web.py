@@ -11,6 +11,7 @@ loop runs in a background thread of the test process.
 import json
 import shutil
 import socket
+import socketserver
 import sys
 import threading
 import time
@@ -33,6 +34,70 @@ FAKE = ROOT / "fakejava_web"
 SERVER = None
 BASE = ""
 ERRORS = []
+
+
+def _fake_agent(sock_path, tunnels):
+    """A stand-in playitd speaking the project's IPC line protocol.
+
+    Replies to get_status / subscribe with a claimed agent that owns the given
+    tunnels, so the tunnels endpoint can be exercised without a real agent
+    (playitd 1.0.10 is not runnable in CI).
+    """
+    import os
+    if os.path.exists(sock_path):
+        try:
+            os.unlink(sock_path)
+        except OSError:
+            pass
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.sendall(
+                (json.dumps({"data": {"agent_id": "fake"}}) + "\n").encode())
+            buf = b""
+            while True:
+                try:
+                    chunk = self.request.recv(4096)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        msg = json.loads(line.decode())
+                    except ValueError:
+                        continue
+                    rtype = (msg.get("request") or {}).get("type")
+                    if rtype == "get_status":
+                        data = {"pid": os.getpid(), "version": "fake",
+                                "has_secret": True}
+                    elif rtype == "subscribe":
+                        data = {"snapshot": {"lifecycle": {
+                            "state": "Claimed",
+                            "data": {"tunnels": tunnels,
+                                     "account_status": "claimed",
+                                     "login_link": None},
+                        }, "stats": {}}}
+                    else:
+                        data = {}
+                    reply = {"message_kind": "response",
+                             "data": {"request_id": msg.get("request_id"),
+                                      "response": {"type": rtype,
+                                                    "data": data}}}
+                    try:
+                        self.request.sendall((json.dumps(reply) + "\n").encode())
+                    except OSError:
+                        return
+
+    server = socketserver.ThreadingUnixStreamServer(str(sock_path), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever,
+                     kwargs={"poll_interval": 0.05}, daemon=True).start()
+    return server
 
 
 def make_fake_java():
@@ -379,6 +444,57 @@ def cleanup():
             pass
 
 
+def test_two_tunnels_both_editions():
+    """The post-setup state is TWO tunnels: TCP for Java, UDP for Bedrock.
+
+    The dashboard used to read tunnels.tunnels[0] and call it "the" address,
+    which hid whichever edition sorted second. This stands up a fake agent
+    speaking the real IPC protocol, reporting both, and checks the endpoint
+    hands both back with the right protocol labels - the UI layer above it
+    then renders one address per edition.
+    """
+    sock_path = paths.playit_socket()
+    sock_path.parent.mkdir(parents=True, exist_ok=True)
+    server = None
+    try:
+        server = _fake_agent(sock_path, [
+            {"display_address": "java.example.tun.ply.gg:25565",
+             "destination": "127.0.0.1:25565", "is_disabled": False,
+             "disabled_reason": None},
+            {"display_address": "bedrock.example.tun.ply.gg:19132",
+             "destination": "127.0.0.1:19132", "is_disabled": False,
+             "disabled_reason": None},
+        ])
+        deadline = time.time() + 5.0
+        while not sock_path.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        tunnels = get("/api/tunnels")
+        rows = tunnels.get("tunnels") or []
+        check("two tunnels came back from the agent", len(rows) == 2, str(rows))
+        protos = sorted(r.get("proto") for r in rows)
+        check("one TCP and one UDP tunnel",
+              protos == ["TCP", "UDP"], str(protos))
+        # the UI picks the Java row for the primary address and the UDP row for
+        # the Bedrock one; both have to survive the round trip
+        java = next((r for r in rows if r.get("proto") != "UDP"), None)
+        udp = next((r for r in rows if r.get("proto") == "UDP"), None)
+        check("the java tunnel address is intact",
+              java and java.get("host") and java.get("port"), str(java))
+        check("the bedrock tunnel address is intact",
+              udp and udp.get("host") and udp.get("port"), str(udp))
+        # 19132 is what marks a tunnel as Bedrock (see _looks_udp)
+        check("the UDP tunnel is the one pointing at 19132",
+              udp and str(udp.get("destination", "")).endswith(":19132"), str(udp))
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        try:
+            sock_path.unlink()
+        except OSError:
+            pass
+
+
 def main():
     global SERVER, BASE
     make_fake_java()
@@ -392,7 +508,8 @@ def main():
     try:
         for fn in (test_ui_and_gets, test_player_lists, test_server_and_console,
                    test_settings, test_instance_lifecycle, test_servers_and_connect,
-                   test_claim_link, test_backups, test_sse):
+                   test_claim_link, test_two_tunnels_both_editions,
+                   test_backups, test_sse):
             print(f"-- {fn.__name__}")
             try:
                 fn()

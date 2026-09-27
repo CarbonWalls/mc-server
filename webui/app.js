@@ -224,11 +224,12 @@ const MOCK = {
     ]
   },
   tunnels: {
-    tunnels: [{
-      host: "laurel-reef.tun.ply.gg", port: "25565",
-      destination: "127.0.0.1:25565", proto: "TCP",
-      disabled: false, reason: null
-    }],
+    tunnels: [
+      { host: "laurel-reef.tun.ply.gg", port: "25565",
+        destination: "127.0.0.1:25565", proto: "TCP", disabled: false, reason: null },
+      { host: "laurel-reef.tun.ply.gg", port: "6695",
+        destination: "127.0.0.1:19132", proto: "UDP", disabled: false, reason: null }
+    ],
     account: { status: "claimed", login_link: "https://playit.gg/claim/abc123" },
     has_secret: true, claim_url: "", playitd: "running"
   },
@@ -1369,11 +1370,21 @@ async function renderDashboard(container) {
 
   const srv = status.server || { state: "stopped" };
   const running = srv.state === "running";
-  const tunnelInfo = (tunnels && tunnels.tunnels && tunnels.tunnels[0]) || null;
+  const rows = (tunnels && tunnels.tunnels) || [];
+  // Two tunnels are the normal end state: a TCP one for Java players and a
+  // UDP one for Bedrock players. Showing only rows[0] meant whichever
+  // happened to sort first was the "the" address and the other was invisible
+  // on the dashboard - so pick by protocol instead.
+  const upRows = rows.filter(t => !t.disabled);
+  const javaT = upRows.find(t => t.proto !== "UDP") || null;
+  const bedrockT = upRows.find(t => t.proto === "UDP") || null;
+  const tunnelInfo = javaT || bedrockT || rows[0] || null;
+  const anyTunnel = rows.length > 0;
   const tunnelDisabled = tunnelInfo && tunnelInfo.disabled;
-  const shareAddress = tunnelInfo && !tunnelDisabled
-    ? tunnelInfo.host + ":" + tunnelInfo.port
-    : null;
+  const shareAddress = javaT ? javaT.host + ":" + javaT.port
+    : bedrockT ? bedrockT.host + ":" + bedrockT.port : null;
+  const bedrockAddress = bedrockT ? bedrockT.host + ":" + bedrockT.port : null;
+  const agentDown = tunnels && tunnels.playitd && tunnels.playitd !== "running";
 
   const otherInstances = (state.instances || []).filter(i => i.id !== state.instance);
 
@@ -1422,7 +1433,7 @@ async function renderDashboard(container) {
       <!-- ============ Share address ============ -->
       <section class="card" aria-labelledby="dash-share-h">
         <div class="card-h"><span id="dash-share-h">Invite friends</span>
-          ${tunnelInfo ? '<span class="pill ' + (tunnelDisabled ? "warn" : (shareAddress ? "ok" : "")) + '">' +
+          ${anyTunnel ? '<span class="pill ' + (tunnelDisabled ? "warn" : (shareAddress ? "ok" : "")) + '">' +
             (tunnelDisabled ? "disabled" : (shareAddress ? "tunnel up" : "no tunnel")) + "</span>" : ""}
         </div>
 
@@ -1434,13 +1445,35 @@ async function renderDashboard(container) {
             </button>
           </div>
           <p class="small muted" style="margin-top:9px">
-            Share this with friends. No port forwarding needed — the tunnel
-            handles it.
+            Java edition — share this with friends. No port forwarding needed,
+            the tunnel handles it.
           </p>
+          ${bedrockAddress ? `
+            <div class="address" id="shareAddressBedrock" style="margin-top:10px">
+              <code>${esc(bedrockAddress)}</code>
+              <button class="icon-btn" id="copyBedrock" type="button" aria-label="Copy Bedrock address">
+                ${ICONS.copy}
+              </button>
+            </div>
+            <p class="small muted" style="margin-top:6px">
+              Bedrock edition (phones, consoles, Windows 10).
+            </p>` : ""}
         ` : tunnelInfo && tunnelDisabled ? `
           <div class="empty" style="padding:12px 0 6px">
             Tunnel is disabled${tunnelInfo.reason ? ": " + esc(tunnelInfo.reason) : "."}
           </div>
+        ` : agentDown ? `
+          <div class="empty" style="padding:12px 0 6px">
+            The playit agent is not running, so this server is not reachable
+            from the internet right now.
+          </div>
+          <button class="btn btn-block" style="margin-top:8px" id="connectBtn" type="button">
+            ${ICONS.link}<span>Start the playit agent</span>
+          </button>
+          <p class="small faint" style="margin-top:7px">
+            Your tunnels are already configured — they come back the moment the
+            agent is up.
+          </p>
         ` : `
           <div class="empty" style="padding:12px 0 6px">
             No public tunnel for this instance.
@@ -1547,6 +1580,23 @@ async function renderDashboard(container) {
 
   const openConsole = $("#openConsole");
   if (openConsole) openConsole.onclick = () => navigate("console");
+
+  const copyBedrock = $("#copyBedrock");
+  if (copyBedrock) {
+    copyBedrock.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(bedrockAddress);
+        toast("Bedrock address copied to clipboard", "ok");
+      } catch (_) {
+        const range = document.createRange();
+        range.selectNodeContents($("#shareAddressBedrock code"));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        toast("Address selected — press Ctrl/Cmd+C", "info", 6000);
+      }
+    };
+  }
 
   const connectBtn = $("#connectBtn");
   if (connectBtn) connectBtn.onclick = () => navigate("connect");

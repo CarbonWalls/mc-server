@@ -27,6 +27,11 @@ HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent
 
 MANIFEST_GLOBS = ("data", "instances", "server", "jdk", "bin", "logs")
+# Paths a running server rewrites on its own: the spark profiler appends to a
+# .jfr.tmp continuously and its native lib is unpacked fresh each session. A
+# live server churning these is not the clean-room run mutating source, and
+# hashing them makes this test flap whenever a real server is up.
+MANIFEST_IGNORE = (Path("server/plugins/spark/tmp"),)
 
 
 def manifest(root: Path) -> dict:
@@ -36,12 +41,15 @@ def manifest(root: Path) -> dict:
         if not base.exists():
             continue
         for path in sorted(base.rglob("*")):
-            if path.is_file():
-                try:
-                    out[str(path.relative_to(root))] = hashlib.sha256(
-                        path.read_bytes()).hexdigest()
-                except OSError:
-                    pass
+            if not path.is_file():
+                continue
+            if any(path.is_relative_to(root / skip) for skip in MANIFEST_IGNORE):
+                continue
+            try:
+                out[str(path.relative_to(root))] = hashlib.sha256(
+                    path.read_bytes()).hexdigest()
+            except OSError:
+                pass
     return out
 
 
