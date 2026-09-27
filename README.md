@@ -153,7 +153,7 @@ mc-server/
 ├── setup.sh         # downloads everything (idempotent)
 ├── start.sh         # starts server + tunnel (env: TUNNEL, XMS, XMX, SERVER_PORT)
 ├── stop.sh          # clean shutdown
-├── webui/           # the frozen browser UI (served by mc_tui.py --web)
+├── webui/           # the browser UI: index.html + styles.css + app.js
 ├── bin/             # bore + playit binaries (local, not on PATH)
 ├── jdk/current/     # Temurin JDK 25 (bundled, not system-wide)
 ├── server/          # Paper jar, world data, plugins (Geyser + Floodgate)
@@ -282,12 +282,20 @@ python3 mc_tui.py --web                    # http://127.0.0.1:8080
 python3 mc_tui.py --web --web-port 9000    # pick a port
 ```
 
-It serves the frozen single-file page in `webui/index.html` and the JSON API it
-talks to: status, instances, start/stop/kill, the console, players and bans,
+It serves the frozen browser UI in `webui/` (`index.html` + the `styles.css`
+and `app.js` it links, same folder, no build step) and the JSON API it talks
+to: status, instances, start/stop/kill, the console, players and bans,
 backups, tunnels, jobs, and an SSE stream (`/api/events`) that pushes status,
 log lines, player changes and job progress to the browser. Open it with
 `?mock=1` to click through the whole UI against a built-in dataset, with no
 server and no network — it is the fastest way to see what the UI does.
+
+The screens: **dashboard** (status + share address), **servers** (every
+instance in one table with activate / start / stop / rename / clone / change
+Paper version / delete), **console**, **players**, **backups**,
+**create server** (the wizard), **connect playit** (the guided
+claim-and-tunnel setup, see `docs/PORT_SETUP.md`), and **settings** (memory,
+ports, tunnel, Java override).
 
 The server binds to **127.0.0.1 only** on purpose: the page can send console
 commands to your server, so it must not be public. `--web-host 0.0.0.0` is

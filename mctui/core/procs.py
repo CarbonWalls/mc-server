@@ -422,12 +422,17 @@ def clear_stale(instance_id: str, jar_name: str = "paper.jar") -> str:
     return "nothing to clear"
 
 
-def start_playitd(verbose: bool = True) -> dict:
+def start_playitd(verbose: bool = True, first_run: bool = False) -> dict:
     exe = paths.bin_dir() / "playitd"
     if not os.access(exe, os.X_OK):
         return {"ok": False, "error": f"playitd binary missing or not executable: {exe}"}
     if not paths.playit_secret().exists():
-        return {"ok": False, "error": f"playit secret missing at {paths.playit_secret()}"}
+        if not first_run:
+            return {"ok": False, "error": f"playit secret missing at {paths.playit_secret()}"}
+        # the one-time claim path: a daemon with no secret generates one and
+        # prints https://playit.gg/claim/<code> to its verbose log. That is
+        # exactly what start.sh does, and what the web UI's guided setup needs
+        # on a machine that has never run TUNNEL=playit ./start.sh.
     status = playitd_status()
     if status["state"] == "running":
         return {"ok": False, "error": f"playitd already running as PID {status['pid']}"}

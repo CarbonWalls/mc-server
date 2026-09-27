@@ -15,6 +15,12 @@ Contract notes the UI documents as TODOs, implemented here:
     "requires restart" and the properties file is what a start reads.
   * ``GET /api/plugins/catalogue`` enumerates installable plugins so the create
     wizard does not have to hardcode them.
+  * ``POST /api/instances/paper-version`` swaps an instance's paper.jar, and
+    ``GET /api/paper/versions`` lists what can be installed.
+  * ``POST /api/playit/start | /stop`` plus the claim link, claimed flag and
+    tunnel rows in ``GET /api/tunnels`` back the guided Connect screen.
+  * ``POST /api/instances/tunnel-port`` records the public port playit assigned
+    the Bedrock tunnel and rewrites Geyser's ``broadcast-port``.
 
 Live updates: ``GET /api/events`` is an SSE stream with named events
 ``status``, ``log``, ``players`` and ``job`` — the same four things the TUI
@@ -27,6 +33,7 @@ caller sets MCTUI_WEB_ALLOW_PUBLIC=1, and even then a warning is printed.
 
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,7 +42,14 @@ from pathlib import Path
 from .core import (backup, config, console as console_core, instances, logs,
                    paths, playit_ipc, players, procs, version)
 
-WEBUI_FILE = Path(__file__).resolve().parent.parent / "webui" / "index.html"
+WEBUI_DIR = Path(__file__).resolve().parent.parent / "webui"
+WEBUI_FILE = WEBUI_DIR / "index.html"
+
+# the page is split into index.html + styles.css + app.js; the two linked
+# files are served from the same folder, same origin, still no build step
+WEBUI_TYPES = {".html": "text/html; charset=utf-8",
+               ".css": "text/css; charset=utf-8",
+               ".js": "application/javascript; charset=utf-8"}
 
 DEFAULT_PORT = 8080
 DEFAULT_HOST = "127.0.0.1"
@@ -105,7 +119,10 @@ class ApiHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path, _, query = self.path.partition("?")
         if path in ("/", "/index.html", "/webui", "/webui/"):
-            return self._serve_ui()
+            return self._serve_file(WEBUI_FILE)
+        if path.startswith("/"):
+            if self._serve_file(WEBUI_DIR / path.lstrip("/")):
+                return
         if path == "/api/status":
             return _json(self, self._status())
         if path == "/api/instances":
@@ -119,6 +136,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             return _json(self, self._backups(_param(query, "instance")))
         if path == "/api/tunnels":
             return _json(self, self._tunnels())
+        if path == "/api/paper/versions":
+            return _json(self, self._paper_versions())
         if path == "/api/jobs":
             return _json(self, {"jobs": [j.snapshot()
                                          for j in self.server.jobs.recent(20)]})
@@ -139,17 +158,34 @@ class ApiHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             _fail(self, f"{type(exc).__name__}: {exc}", status=500)
 
-    # --- the frozen UI ------------------------------------------------
-    def _serve_ui(self):
+    # --- the frozen UI + its linked assets -----------------------------
+    def _serve_file(self, path: Path) -> bool:
+        """Serve a file from webui/. Returns False (nothing sent) if it is not
+        a plain file we are allowed to hand out, so the router can move on."""
         try:
-            data = WEBUI_FILE.read_bytes()
+            resolved = path.resolve()
+        except OSError:
+            return False
+        try:
+            resolved.relative_to(WEBUI_DIR.resolve())
+        except ValueError:
+            return False          # outside webui/ — never serve it
+        if not resolved.is_file():
+            return False
+        try:
+            data = resolved.read_bytes()
         except OSError as exc:
-            return _fail(self, f"webui not found: {exc}", status=404)
+            _fail(self, f"could not read {resolved.name}: {exc}", status=404)
+            return True
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type",
+                          WEBUI_TYPES.get(resolved.suffix.lower(),
+                                          "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
+        return True
 
     # --- GET shapes (match the UI's expectations exactly) --------------
     def _status(self):
@@ -182,6 +218,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         for entry in index.get("instances", []):
             instance_id = str(entry.get("id") or "")
             target = instances.path_of(instance_id)
+            # the raw process classification, so the Servers screen can tell
+            # 'stale' (pid file, no process) and 'missing' (folder gone) apart
             state = procs.classify(procs.read_pid(
                 paths.log_paths(instance_id)["server_pid"]), "paper.jar")
             out.append({
@@ -193,11 +231,32 @@ class ApiHandler(BaseHTTPRequestHandler):
                 "build": entry.get("build"),
                 "tunnel": entry.get("tunnel") or "none",
                 "bedrock_port": entry.get("bedrock_port"),
-                "state": state if state != "missing" else "stopped",
+                "state": state,
                 "created": entry.get("created") or "",
                 "note": entry.get("note") or "",
+                # the built-in main instance cannot be renamed or deleted; the
+                # Servers screen hides those actions rather than offering them
+                # and failing
+                "builtin": bool(entry.get("builtin")),
+                # what the Settings screen shows: these are read at launch time
+                "xms": entry.get("xms") or "",
+                "xmx": entry.get("xmx") or "",
+                "java_override": entry.get("java_override") or "",
+                "server_port": self._instance_server_port(instance_id, entry),
             })
         return {"active": active, "instances": out}
+
+    @staticmethod
+    def _instance_server_port(instance_id: str, entry: dict):
+        """The port a start actually reads: server.properties, falling back to
+        the recorded default."""
+        props_path = paths.instance_path(instance_id) / "server.properties"
+        if props_path.is_file():
+            try:
+                return config.read_properties(props_path).get("server-port") or ""
+            except Exception:
+                pass
+        return entry.get("server_port") or ""
 
     def _logs(self, instance_id: str, lines: int):
         path = paths.log_paths(instance_id)["server_log"]
@@ -234,18 +293,54 @@ class ApiHandler(BaseHTTPRequestHandler):
         return {"backups": out}
 
     def _tunnels(self):
-        running = procs.playitd_status().get("state") == "running"
+        playitd = procs.playitd_status()
+        running = playitd.get("state") == "running"
         try:
             result = playit_ipc.query(playitd_running=running, timeout=4.0)
         except Exception:
-            return {"tunnels": [], "account": None}
+            result = {}
         account = None
-        if result.get("account_status"):
+        if result.get("account_status") or result.get("login_link"):
             account = {
-                "status": result.get("account_status"),
+                "status": result.get("account_status") or "unknown",
                 "login_link": result.get("login_link"),
             }
-        return {"tunnels": playit_ipc.tunnel_rows(result), "account": account}
+        # the claim link is the login_link the agent reports over IPC when it
+        # has no secret yet; on a first run the daemon only prints it to its
+        # verbose log, so fall back to the last one it logged.
+        claim_url = (result.get("login_link") or _claim_url_from_log())
+        return {
+            "tunnels": playit_ipc.tunnel_rows(result),
+            "account": account,
+            # has_secret is the honest "is this agent claimed" flag: it is set
+            # the moment the one-time browser claim finishes
+            "has_secret": bool(result.get("has_secret")),
+            "claim_url": claim_url if not result.get("has_secret") else "",
+            "playitd": playitd.get("state"),
+        }
+
+    def _paper_versions(self):
+        """The Paper lines the launcher can install, newest first.
+
+        Used by the Servers screen's 'change version' action so the choice is
+        whatever papermc actually offers, not a hardcoded list."""
+        try:
+            entries = version.paper_versions(limit=12)
+        except Exception as exc:
+            return {"versions": [], "error": f"could not reach papermc: {exc}"}
+        out = []
+        for entry in entries:
+            build = entry.get("build") or {}
+            out.append({
+                "version": str(entry.get("key") or ""),
+                "build": build.get("number"),
+                "url": build.get("url", ""),
+                "size": build.get("size") or 0,
+                "sha256": build.get("sha256") or "",
+                "release": bool(entry.get("release")),
+                "min_java": entry.get("min_java"),
+            })
+        return {"versions": out}
 
     def _plugin_catalogue(self):
         """The installable plugins the create wizard offers."""
@@ -406,6 +501,57 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.server.run_job(f"clone {new_id}", job_fn)
         _ok(self)
 
+    def instances_paper_version(self, body):
+        """Swap an instance's paper.jar for another build (server stopped)."""
+        instance_id = _instance_id(self, body)
+        game_version = str(body.get("version") or "")
+        build_number = int(body.get("build") or 0)
+
+        def job_fn(job):
+            job.update(0.05, "resolving the paper download")
+            builds = self._resolve_paper(job, game_version, build_number)
+            if not builds:
+                raise RuntimeError("no paper build found for "
+                                   f"{game_version or 'the latest version'}")
+            return instances.change_paper_version(job, instance_id, builds[0])
+
+        self.server.run_job(f"paper {instance_id}", job_fn)
+        _ok(self)
+
+    def instances_tunnel_port(self, body):
+        """Record the public port playit assigned the Bedrock tunnel.
+
+        Writes Geyser's broadcast-port so Bedrock clients are pointed at the
+        tunnel and not at the local port."""
+        instance_id = _instance_id(self, body)
+        port = int(body.get("port") or 0)
+        outcome = instances.apply_tunnel_port(instance_id, port)
+        if outcome.get("ok"):
+            self.server.broadcast("status", self._status())
+            _ok(self, outcome)
+        else:
+            _fail(self, outcome.get("error", "could not set the tunnel port"))
+
+    def playit_start(self, body):
+        """Start the playit agent. On a first run it generates a secret and
+        prints a one-time claim link; the UI reads that link back from
+        /api/tunnels and polls until the agent is claimed."""
+        outcome = procs.start_playitd(verbose=True,
+                                     first_run=bool(body.get("first_run")))
+        if outcome.get("ok"):
+            self.server.broadcast("status", self._status())
+            _ok(self, outcome)
+        else:
+            _fail(self, outcome.get("error", "could not start playitd"))
+
+    def playit_stop(self, body):
+        outcome = procs.stop_playitd(timeout=15.0)
+        if outcome.get("ok"):
+            self.server.broadcast("status", self._status())
+            _ok(self, outcome)
+        else:
+            _fail(self, outcome.get("error", "could not stop playitd"))
+
     def instances_settings(self, body):
         """Persist runtime settings (memory / ports / tunnel / java override).
 
@@ -434,8 +580,20 @@ class ApiHandler(BaseHTTPRequestHandler):
         if java:
             set_field("java_override", java)
         bedrock = body.get("bedrock_port")
-        if bedrock:
-            set_field("bedrock_port", int(bedrock))
+        if bedrock not in (None, ""):
+            try:
+                bedrock_value = int(bedrock)
+            except (TypeError, ValueError):
+                return _fail(self, f"bedrock_port must be a number, got {bedrock!r}")
+            if not (1 <= bedrock_value <= 65535):
+                return _fail(self, f"bedrock_port out of range: {bedrock_value}")
+            set_field("bedrock_port", bedrock_value)
+            # the README documents this endpoint as rewriting broadcast-port;
+            # keep the promise so there is one place that sets the public port.
+            # No Geyser config (Bedrock not installed) just means nothing to do.
+            outcome = instances.apply_tunnel_port(instance_id, bedrock_value)
+            if outcome.get("ok") and outcome.get("changed"):
+                changed.append("broadcast-port")
 
         # ports live in server.properties, which is what a start reads
         props_path = paths.instance_path(instance_id) / "server.properties"
@@ -614,6 +772,8 @@ ROUTES = {
     "/api/instances/rename": ApiHandler.instances_rename,
     "/api/instances/clone": ApiHandler.instances_clone,
     "/api/instances/settings": ApiHandler.instances_settings,
+    "/api/instances/paper-version": ApiHandler.instances_paper_version,
+    "/api/instances/tunnel-port": ApiHandler.instances_tunnel_port,
     "/api/server/start": ApiHandler.server_start,
     "/api/server/stop": ApiHandler.server_stop,
     "/api/server/kill": ApiHandler.server_kill,
@@ -627,7 +787,30 @@ ROUTES = {
     "/api/backups/create": ApiHandler.backups_create,
     "/api/backups/restore": ApiHandler.backups_restore,
     "/api/backups/delete": ApiHandler.backups_delete,
+    "/api/playit/start": ApiHandler.playit_start,
+    "/api/playit/stop": ApiHandler.playit_stop,
 }
+
+
+def _claim_url_from_log() -> str:
+    """The last https://playit.gg/claim/<code> the agent printed.
+
+    A first-run agent has no secret yet, so it prints a one-time claim link to
+    its verbose log instead of reporting one over IPC; that link is what the
+    guided setup shows the user."""
+    try:
+        path = paths.log_paths("main")["playitd_verbose_log"]
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    for line in reversed(text.splitlines()):
+        match = _CLAIM_RE.search(line)
+        if match:
+            return match.group(0)
+    return ""
+
+
+_CLAIM_RE = re.compile(r"https://playit\.gg/claim/[A-Za-z0-9]+")
 
 
 def _param(query: str, key: str) -> str:

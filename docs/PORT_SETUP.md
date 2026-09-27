@@ -107,6 +107,11 @@ On the very first run it prints a one-time claim URL:
 Open it on any device, log in, confirm the agent, add it. This happens exactly
 once and cannot be automated by design — it ties the agent to your account.
 
+The browser UI walks through the same steps as a guided flow:
+`python3 mc_tui.py --web` → **Connect playit**. It starts the agent, shows the
+claim link, polls until the claim finishes, and then records the Bedrock
+public port for you.
+
 Then re-run `TUNNEL=playit ./start.sh`. Playit assigns you a persistent
 address, for example `<your-tunnel>.tun.ply.gg`.
 

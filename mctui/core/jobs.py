@@ -57,7 +57,15 @@ class JobRunner:
             try:
                 result = fn(job, *args, **kwargs)
                 job.result = result
-                job.ok = True
+                # a returned {"ok": False, "error": ...} is a failure even
+                # though nothing raised: the UI reports job outcomes, so a job
+                # that failed politely must not read as successful
+                if isinstance(result, dict) and "ok" in result:
+                    job.ok = bool(result.get("ok"))
+                    if not job.ok:
+                        job.error = str(result.get("error") or job.error)
+                else:
+                    job.ok = True
             except Exception as exc:
                 job.ok = False
                 job.error = f"{type(exc).__name__}: {exc}"

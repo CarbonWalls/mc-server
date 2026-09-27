@@ -94,7 +94,26 @@ def test_ui_and_gets():
     with urllib.request.urlopen(BASE + "/", timeout=20) as r:
         page = r.read().decode()
     check("serves the frozen index.html",
-          "Minecraft Server Manager" in page and "EventSource" in page)
+          "Minecraft Server Manager" in page and 'src="app.js"' in page)
+
+    # the page is split into index.html + styles.css + app.js; the two linked
+    # assets must be served from the same origin, still with no build step
+    with urllib.request.urlopen(BASE + "/styles.css", timeout=20) as r:
+        css = r.read().decode()
+    check("styles.css is served", ":root" in css and "--accent" in css)
+    with urllib.request.urlopen(BASE + "/app.js", timeout=20) as r:
+        appjs = r.read().decode()
+    check("app.js is served and unchanged",
+          "EventSource" in appjs and "SCREENS" in appjs)
+    check("linked assets are not inlined into index.html",
+          "<style" not in page and "EventSource" not in page)
+    # webui/ is the only folder served: a traversal attempt must not leak files
+    try:
+        with urllib.request.urlopen(BASE + "/../../README.md", timeout=20) as r:
+            leaked = r.status == 200
+    except urllib.error.HTTPError:
+        leaked = False
+    check("paths outside webui/ are not served", not leaked)
 
     status = get("/api/status")
     check("status shape",
@@ -205,6 +224,25 @@ def test_settings():
     check("identical settings are a no-op", again.get("ok") and again.get("unchanged"),
           str(again))
 
+    # bedrock_port also rewrites Geyser's broadcast-port (what the README
+    # promises for this endpoint) and rejects garbage instead of 500ing
+    bad = post("/api/instances/settings",
+               {"instance": INSTANCE, "bedrock_port": "not-a-port"})
+    check("a non-numeric bedrock_port is rejected", not bad.get("ok"), str(bad))
+    ranged = post("/api/instances/settings",
+                  {"instance": INSTANCE, "bedrock_port": 99999})
+    check("an out-of-range bedrock_port is rejected", not ranged.get("ok"),
+          str(ranged))
+    applied = post("/api/instances/settings",
+                   {"instance": INSTANCE, "bedrock_port": 7777})
+    check("bedrock_port accepted", applied.get("ok"), str(applied))
+    check("bedrock_port stored on the instance",
+          instances.get_instance(INSTANCE).get("bedrock_port") == 7777)
+    geyser = (paths.instance_path(INSTANCE) / "plugins" / "Geyser-Spigot"
+              / "config.yml")
+    check("settings also wrote broadcast-port",
+          "broadcast-port: 7777" in geyser.read_text())
+
 
 def test_instance_lifecycle():
     """Validation paths that don't need a download."""
@@ -221,6 +259,59 @@ def test_instance_lifecycle():
                {"instance": "webclone", "new_id": "webrenamed"}).get("ok"))
     check("delete accepted",
           post("/api/instances/delete", {"instance": "webrenamed"}).get("ok"))
+
+
+def test_servers_and_connect():
+    """The Servers screen rows and the guided playit flow."""
+    listing = get("/api/instances")
+    row = next(i for i in listing["instances"] if i["id"] == INSTANCE)
+    for key in ("id", "name", "path", "exists", "paper_version", "build",
+                "tunnel", "bedrock_port", "state", "created", "note",
+                "xms", "xmx", "java_override", "server_port"):
+        check(f"instance row has {key}", key in row, str(row)[:200])
+    # the raw classification, so Servers can tell 'stale' from 'missing'
+    check("instance state is the raw process state",
+          row["state"] in ("running", "stopped", "stale", "missing"), str(row))
+
+    tunnels = get("/api/tunnels")
+    check("tunnels reports the claimed flag", "has_secret" in tunnels, str(tunnels))
+    check("tunnels reports a claim link", "claim_url" in tunnels)
+
+    applied = post("/api/instances/tunnel-port",
+                   {"instance": INSTANCE, "port": 6695})
+    check("tunnel port applied", applied.get("ok"), str(applied))
+    geyser = paths.instance_path(INSTANCE) / "plugins" / "Geyser-Spigot" / "config.yml"
+    text = geyser.read_text()
+    check("broadcast-port was written to the Geyser config",
+          "broadcast-port: 6695" in text, text[-200:])
+    bad = post("/api/instances/tunnel-port", {"instance": INSTANCE, "port": 0})
+    check("an invalid port is refused", not bad.get("ok"), str(bad))
+
+    # the paper listing degrades to an error rather than raising when the
+    # papermc API is unreachable
+    versions = get("/api/paper/versions")
+    check("paper versions shape", "versions" in versions, str(versions)[:160])
+
+    # a missing instance must fail in the job instead of downloading anything
+    check("paper-version accepts the job",
+          post("/api/instances/paper-version",
+               {"instance": "no-such-instance", "version": "1.21.4"}).get("ok"))
+    deadline = time.time() + 25.0
+    failed = False
+    while time.time() < deadline:
+        jobs = get("/api/jobs")["jobs"]
+        mine = [j for j in jobs if str(j.get("name", "")).startswith("paper ")]
+        if mine and all(j.get("done") for j in mine):
+            failed = all(not j.get("ok") for j in mine)
+            break
+        time.sleep(0.4)
+    check("paper-version on a missing instance fails cleanly", failed)
+
+    # the daemon stub exits immediately; starting and stopping must be safe
+    check("playit start is accepted",
+          post("/api/playit/start", {"first_run": True}).get("ok"))
+    check("playit stop is accepted",
+          post("/api/playit/stop", {}).get("ok"))
 
 
 def test_backups():
@@ -299,8 +390,8 @@ def main():
     time.sleep(0.4)
     try:
         for fn in (test_ui_and_gets, test_player_lists, test_server_and_console,
-                   test_settings, test_instance_lifecycle, test_backups,
-                   test_sse):
+                   test_settings, test_instance_lifecycle, test_servers_and_connect,
+                   test_backups, test_sse):
             print(f"-- {fn.__name__}")
             try:
                 fn()
