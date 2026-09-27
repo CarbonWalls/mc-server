@@ -290,6 +290,44 @@ def test_wizard_text_entry():
     stray = pathlib.Path(os.environ["MCTUI_ROOT"]) / "instances" / "aqua-quest"
     if stray.exists():
         shutil.rmtree(stray, ignore_errors=True)
+    return errors
+
+def test_instances_start_key():
+    """The Instances screen starts a server with 's', like the web Servers row.
+
+    Both UIs should be able to start an instance without activating it first.
+    The state file is the witness: a job starting launches the fake java, and
+    the screen reports the instance running.
+    """
+    errors = []
+    proc, master, state = spawn("instances")
+    out = pump(master, 1.2)
+
+    if not wait_text(out, "start/stop", 6.0, master):
+        errors.append("the footer does not advertise the start/stop key")
+
+    os.write(master, b"s")
+    pump(master, 1.0, out)
+    # The job is asynchronous, and the seeded tree has no paper.jar, so the
+    # honest outcome is a "missing paper.jar" report - not "starting" stuck on
+    # screen. Either way the job ran, which is the wiring under test.
+    if not wait_text(out, "starting main", 8.0, master):
+        errors.append("pressing s did not start the instance job")
+    if not wait_text(out, "paper.jar", 20.0, master):
+        errors.append("the start job never reported back: "
+                      f"{visible(out)[-300:]!r}")
+
+    # the same key stops a running server: seed a jar and start for real
+    jar = pathlib.Path(os.environ["MCTUI_ROOT"]) / "server" / "paper.jar"
+    jar.parent.mkdir(parents=True, exist_ok=True)
+    jar.write_bytes(b"fakejar")
+    os.write(master, b"s")
+    pump(master, 1.0, out)
+    if not wait_text(out, "started main", 25.0, master):
+        errors.append(f"a real start did not report success: {visible(out)[-300:]!r}")
+    finish(proc, master, out, state, errors, "instances-start")
+    return errors
+
     if not errors:
         print("ok wizard text entry ('q' types, enter advances, esc leaves)")
     for err in errors:
@@ -312,6 +350,8 @@ def main():
     if "create" in only and not os.environ.get("MCTUI_SKIP_WIZARD"):
         all_errors.extend(test_create_wizard())
         all_errors.extend(test_wizard_text_entry())
+    if "instances" in only and not os.environ.get("MCTUI_SKIP_WIZARD"):
+        all_errors.extend(test_instances_start_key())
     if all_errors:
         print(f"FAILED ({len(all_errors)} problems)")
         return 1

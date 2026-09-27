@@ -134,9 +134,18 @@ class dashboard(Screen):
             return f"unavailable ({self.tunnel_error[:40]})"
         if not self.tunnel_rows:
             return "no tunnels"
+        # two tunnels is the normal end state (TCP for Java, UDP for Bedrock);
+        # listing just the first would hide one edition's address
+        def addr(row):
+            return f"{row['host']}:{row['port']}"
+        java = next((r for r in self.tunnel_rows if r.get("proto") != "UDP"), None)
+        bedrock = next((r for r in self.tunnel_rows if r.get("proto") == "UDP"), None)
+        if java and bedrock:
+            return f"java {addr(java)} · bedrock {addr(bedrock)}"
         first = self.tunnel_rows[0]
-        extra = f" (+{len(self.tunnel_rows) - 1} more)" if len(self.tunnel_rows) > 1 else ""
-        return f"{first['host']} -> {first['destination']}{extra}"
+        extra = (f" (+{len(self.tunnel_rows) - 1} more)"
+                 if len(self.tunnel_rows) > 1 else "")
+        return f"{addr(first)}{extra}"
 
     def handle_key(self, key):
         height, _ = self.size(self.ctx.stdscr)

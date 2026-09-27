@@ -2,7 +2,7 @@ import curses
 import time
 
 from ..core import instances as instances_core
-from ..core import procs, version
+from ..core import paths, procs, version
 from ..ui import theme as th
 from ..ui import widgets as w
 from ._base import Screen
@@ -89,7 +89,8 @@ class instances(Screen):
                            self.theme.accent)
 
         self.footer(win, [
-            ("⏎", "activate"), ("n", "new"), ("c", "clone"), ("r", "rename"),
+            ("⏎", "activate"), ("s", "start/stop"), ("n", "new"),
+            ("c", "clone"), ("r", "rename"),
             ("d", "delete"), ("p", "paper ver"), ("L", "reload"),
             ("?", "help"), ("q", "back"),
         ])
@@ -173,6 +174,12 @@ class instances(Screen):
                 "into backups/ first.",
                 title="delete instance", dangerous=True, yes_label="delete")
             self.pending = "_do_delete"
+        elif key in (ord("s"), ord("S")):
+            state = procs.server_status(entry["id"]).get("state")
+            if state == "running":
+                self._stop(entry["id"])
+            else:
+                self._start(entry["id"])
         elif key in (ord("p"), ord("P")):
             self._load_versions()
         return None
@@ -188,6 +195,52 @@ class instances(Screen):
             self.refresh()
         else:
             self._say(str(outcome.get("error")), "err")
+
+    def _start(self, instance_id):
+        # the same job the Server control screen runs, so the two UIs start a
+        # server identically; the web Servers screen has this per row too
+        settings = self.ctx.settings
+        env = paths.env_overrides(settings)
+        entry = instances_core.get_instance(instance_id) or {}
+
+        def job_fn(job):
+            job.update(0.1, "launching java")
+            return procs.start_server(
+                instance_id, jar_name="paper.jar",
+                xms=str(entry.get("xms") or settings.get("xms") or "512M"),
+                xmx=str(entry.get("xmx") or settings.get("xmx") or "768M"),
+                env=env,
+            )
+
+        def on_done(job):
+            result = job.result or {}
+            if result.get("ok"):
+                self._say(f"started {instance_id} pid {result.get('pid')}", "ok")
+            else:
+                self._say(str(result.get("error") or "start failed"), "err", 8.0)
+            self.ctx._status_cache = {"at": 0.0, "data": {}}
+            self.refresh()
+
+        self.ctx.run_job(f"start {instance_id}", job_fn, on_done=on_done)
+        self._say(f"starting {instance_id}...", "info")
+
+    def _stop(self, instance_id):
+        def job_fn(job):
+            return procs.stop_server(
+                instance_id, timeout=60.0,
+                on_progress=lambda p, m: job.update(p, m))
+
+        def on_done(job):
+            result = job.result or {}
+            if result.get("ok"):
+                self._say(f"stopped {instance_id}", "ok")
+            else:
+                self._say(str(result.get("error") or "stop failed"), "err", 8.0)
+            self.ctx._status_cache = {"at": 0.0, "data": {}}
+            self.refresh()
+
+        self.ctx.run_job(f"stop {instance_id}", job_fn, on_done=on_done)
+        self._say(f"stopping {instance_id}...", "info")
 
     def _submit_edit(self):
         entry = self.current()
